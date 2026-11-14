@@ -1,3 +1,6 @@
+// Copyright The Phorepoc Authors
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
+
 // xk_pipe.cpp -- the built-in-device factory of the pipe driver (rombuild --builtin-device 'Sys\Bin\pipelib.ldd=ldd:8'; xboot.cpp points export 1 here),
 // as the Ethernet LDD's (xk_e1000.cpp). The LDD is the 2010 kernel/eka/drivers/pipe/dpipe.cpp, compiled unmodified with only its entry points
 // renamed (make_ekern.sh). RPipe::Create (euser) does User::LoadLogicalDevice("PIPELIB"); without this file Open C pipe() fails with ENOENT,
