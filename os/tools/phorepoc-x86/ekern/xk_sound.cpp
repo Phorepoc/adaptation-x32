@@ -1,5 +1,5 @@
 // Copyright The Phorepoc Authors
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 
 // xk_sound.cpp -- which sound PDD this boot gets. The ROM carries one built-in physical device, Sys\Bin\soundsc.pdd
 // (built-in device id 4), and the real shared-chunk sound LDD (soundldd.cpp, unmodified, entry renamed) binds to

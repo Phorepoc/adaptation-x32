@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright The Phorepoc Authors
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 
 # recipes/kernel.sh -- build the x86-64 (x32) kernel and the bootable GRUB ISO that carries the ROM
 # "phe image rom" made. Runs on Linux inside the toolchain container ("phe image recipe kernel -b <board>" does that).

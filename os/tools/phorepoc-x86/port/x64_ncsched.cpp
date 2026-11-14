@@ -1,5 +1,5 @@
 // Copyright The Phorepoc Authors
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 
 /* x64_ncsched.cpp -- Phorepoc amd64 arch backend: the scheduler / thread /
  * fault core that the arch-neutral nkern references but that is inherently

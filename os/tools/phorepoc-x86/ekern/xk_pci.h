@@ -1,5 +1,5 @@
 /* Copyright The Phorepoc Authors
- * SPDX-License-Identifier: Apache-2.0 */
+ * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later */
 
 // xk_pci.h -- PCI configuration mechanism #1 (ports 0xCF8/0xCFC), shared by the board's PCI drivers (the e1000 NIC,
 // the VMMDev absolute mouse, the AC'97 and HD Audio sound PDDs): config read/write by bus/device/function, and a scan

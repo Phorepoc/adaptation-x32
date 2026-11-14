@@ -1,5 +1,5 @@
 // Copyright The Phorepoc Authors
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 
 // xk_hda.cpp -- Intel High Definition Audio as a SOUND PDD under the REAL shared-chunk sound LDD
 // (kernel/eka/drivers/soundsc/soundldd.cpp, linked in unmodified; the contract is the 2010 DSoundScPdd).

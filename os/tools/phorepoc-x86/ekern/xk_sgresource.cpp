@@ -1,5 +1,5 @@
 // Copyright The Phorepoc Authors
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 
 // xk_sgresource.cpp -- OURS: the graphics kernel side linked into this kernel.
 //  - Graphics Resource (RSgImage): the sg extension (sgextension.dll, a KEXT in a real ROM) and the sgdevice LDD are the REAL

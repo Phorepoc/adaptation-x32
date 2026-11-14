@@ -1,5 +1,5 @@
 /* Copyright The Phorepoc Authors
- * SPDX-License-Identifier: Apache-2.0 */
+ * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later */
 
 // xk_sound.h -- the board's sound PDDs and what they share. xk_ac97.cpp (Intel AC'97) and xk_hda.cpp (Intel High
 // Definition Audio) each offer Start (find + bring up the controller), NewFactory (the PDD factory the ROM's
