@@ -39,6 +39,13 @@ static inline void outb(TUint16 aPort, TUint8 aVal)
 static inline TUint8 inb(TUint16 aPort)
 	{ TUint8 v; __asm__ __volatile__("in al, dx" : "=a"(v) : "d"(aPort)); return v; }
 
+extern "C" void send_resched_ipis(TUint32 aMask);			// x64s_ncsched.cpp
+static inline TUint64 Rdtsc()
+	{ TUint32 lo, hi; __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi)); return (TUint64)hi<<32 | lo; }
+extern TUint32 X64_TscPerMs;
+static TUint32 LapicCountsPerMs;
+static volatile TUint64 Tick0Tsc;		// the TSC at cpu 0's last system tick (the stale-tick rescue, X64_Trap)
+
 volatile TUint32 X64_TickCount;			// diagnostics: system ticks taken on the boot CPU
 static volatile TBool TimerQReady;		// set by the variant's Init3: NTimerQ may be ticked from now on
 volatile TUint32 X64_IpiCount[2];		// diagnostics: reschedule / generic IPIs TAKEN (all CPUs)
@@ -79,6 +86,7 @@ static void SystemTick(TSubScheduler& aSS)
 	{
 	if (aSS.iCpuNum == 0)
 		{
+		Tick0Tsc = Rdtsc();
 		++X64_TickCount;
 		// bounded heartbeat so the tick is observable on the serial log: once a second for 5 s, then
 		// every 10 s up to 60 lines -- "current nanothread" says busy vs idle on a long boot (X4.27)
@@ -307,8 +315,45 @@ static void SlowExec(SX64TrapFrame* aFrame)
 
 const TUint KVecFastExec = 0x20, KVecSlowExec = 0x21;
 
+// Stale-tick rescue. VirtualBox on a Hyper-V host (NEM) can stop delivering every timer of the guest -- the
+// local-APIC timers of all CPUs and the PIT alike (its virtual-sync clock "gives up", 2026-11-16) -- while a CPU
+// goes on running code: the clock then stands still, and every timed wait with it, until a key comes. The TSC keeps
+// counting, and IPIs still arrive. So every kernel entry compares the TSC with cpu 0's last tick: over 3 ms stale,
+// it sends cpu 0 a reschedule IPI (at most one per ms), and cpu 0's IPI handler runs the missed ticks itself (up to
+// 1 s at a time) and re-arms its local-APIC timer. On QEMU / real hardware the tick is never stale: one TSC read.
+static volatile TUint64 RescueKickTsc;
+static TUint32 RescueCount, RescueTicks;
+static void StaleTickCheck()
+	{
+	if (!TimerQReady || !X64_TscPerMs)
+		return;
+	const TUint64 now = Rdtsc();
+	if (now - Tick0Tsc < 3ull * X64_TscPerMs || now - RescueKickTsc < X64_TscPerMs)
+		return;
+	RescueKickTsc = now;
+	send_resched_ipis(1u);
+	}
+static void StaleTickRescue(TSubScheduler& aSS)		// cpu 0, in its reschedule-IPI handler
+	{
+	if (aSS.iCpuNum != 0 || !TimerQReady || !X64_TscPerMs)
+		return;
+	TUint64 missed = (Rdtsc() - Tick0Tsc) / X64_TscPerMs;
+	if (missed < 3)
+		return;
+	if (missed > 1000)
+		missed = 1000;
+	if (RescueCount++ < 5)
+		Kern::Printf("[ekern] tick rescue: cpu 0 tick stale %d ms (%d ticks run so far): re-armed", (TInt)missed, RescueTicks);
+	LapicWr(0x320, KVecTimer | (1u<<17));
+	LapicWr(0x380, LapicCountsPerMs);
+	for (TUint i=0; i<missed; ++i)
+		SystemTick(aSS);
+	RescueTicks += (TUint32)missed;
+	}
+
 extern "C" void X64_Trap(SX64TrapFrame* aFrame)
 	{
+	StaleTickCheck();
 	const TUint vec = (TUint)aFrame->iVector;
 	if (vec < 32)
 		{
@@ -340,6 +385,7 @@ extern "C" void X64_Trap(SX64TrapFrame* aFrame)
 		LapicWr(0xB0, 0);
 		ss.iRescheduleNeededFlag = TRUE;	// another CPU made a thread ready for us: the exit path below acts on it
 		++X64_IpiCount[0];
+		StaleTickRescue(ss);
 		}
 	else if (vec == GENERIC_IPI_VECTOR)
 		{
@@ -379,8 +425,6 @@ extern "C" void X64_Trap(SX64TrapFrame* aFrame)
 	ReturnToUserCheck(aFrame);
 	}
 
-static inline TUint64 Rdtsc()
-	{ TUint32 lo, hi; __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi)); return (TUint64)hi<<32 | lo; }
 TUint32 X64_TscPerMs;					// TSC cycles per ms, measured with the local-APIC calibration
 
 // Count local-APIC timer decrements over a 10 ms PIT channel-2 one-shot.
@@ -404,7 +448,6 @@ static TUint32 CalibrateLapicTimerPerMs()
 // local APICs of one package count at the same rate. It only ages timeslices (SystemTick).
 // The APs come up in A::Init2 -- BEFORE the boot CPU's Init3 starts its own tick -- so the calibration
 // is done on first demand (NKern::BootAP asks before it starts an AP; it polls the PIT, no interrupts).
-static TUint32 LapicCountsPerMs;
 extern "C" TUint32 X64_LapicCountsPerMs()
 	{
 	if (!LapicCountsPerMs)
