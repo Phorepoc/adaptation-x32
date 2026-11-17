@@ -1,0 +1,3 @@
+sys/dev/usb/controller/xhci.c 1217874205e2008a52719fe8840da8eb25bfe87d9650e514b5e54240531b64dc
+sys/dev/usb/controller/xhci.h 55bf16bbfed6f69a573d1c3492ebd01f335eb8ce7ed240988dfa4dba779180d6
+sys/dev/usb/controller/xhcireg.h 9594217057d7f0b5946d7e89280ae73237059ade6145f580cf151528f1d0c001
