@@ -65,7 +65,7 @@ static TInt DisplayMemoryHandle(TAny* a1);	// EDisplayHalGetDisplayMemoryHandle 
 #ifndef XK_DYNRES
 #define XK_DYNRES 0
 #endif
-enum { EDisplayHalPhoreActive = 0x7101, EDisplayHalPhoreRequest = 0x7102, EDisplayHalPhoreRotate = 0x7103 };
+enum { EDisplayHalPhoreActive = 0x7101, EDisplayHalPhoreRequest = 0x7102, EDisplayHalPhoreRotate = 0x7103, EDisplayHalPhoreCompat = 0x7104 };
 // Display rotation (a monitor or a VM window can turn, a phone panel cannot): WSERV draws a rotated screen mode into the
 // shadow screen rotated (the board's draw device, CFbsDrawDevice::SetOrientation), and that draw device tells the display
 // its orientation through EDisplayHalPhoreRotate (CFbsDrawDevice::TOrientation: 0 normal, 1 rotated 90, 3 rotated 270).
@@ -226,6 +226,12 @@ static TInt DisplayHal(TAny*, TInt aFunction, TAny* a1, TAny* a2)
 		X64DisplayRotate((TInt)a1);
 		return KErrNone;
 		}
+	case EDisplayHalPhoreCompat:
+		{
+		extern void X64DisplayCompat(TInt aScale);
+		X64DisplayCompat((TInt)a1);
+		return KErrNone;
+		}
 	case EDisplayHalGetDisplayMemoryHandle:
 		return DisplayMemoryHandle(a1);
 	case EDisplayHalWsRegisterSwitchOnScreenHandling:
@@ -345,6 +351,10 @@ static void ModeDfcFn(TAny*);								// X4.45: a host resize, on the same queue
 static TDfc TheModeDfc(ModeDfcFn, NULL, 2);
 static void RotDfcFn(TAny*);								// the display turns (EDisplayHalPhoreRotate), on the same queue
 static TDfc TheRotDfc(RotDfcFn, NULL, 2);
+static void CompatDfcFn(TAny*);								// the S60 compatibility scale (EDisplayHalPhoreCompat), on the same queue
+static TDfc TheCompatDfc(CompatDfcFn, NULL, 2);
+static TInt TheCompatWanted = 1;							// the scale the window server's screen mode asked for
+TInt X64Compat = 1;											// the scale the display shows the screen's top-left corner at (1 = native: the whole screen 1:1)
 
 static void FlushTimerIsr(TAny*)
 	{
@@ -610,6 +620,7 @@ static TInt StartShadow()
 	TheFlushDfc.SetDfcQ(TheFlushQ);
 	TheModeDfc.SetDfcQ(TheFlushQ);
 	TheRotDfc.SetDfcQ(TheFlushQ);
+	TheCompatDfc.SetDfcQ(TheFlushQ);
 	TheFlushTimer.OneShot(NKern::TimerTicks(KFlushMs));
 	return KErrNone;
 	}
@@ -831,9 +842,56 @@ static void RotDfcFn(TAny*)
 					X64Rot, X64FbW, X64FbH, DispW(), DispH(), X64Scale, X64ScreenOx, X64ScreenOy);
 	}
 
+// Native resolution (adaptation-pc PHOREPOC_NATIVE=1): the screen is the panel's own size (720x1440). An S60 screen mode is the
+// window server's 360x640 logical screen at scale 2 (wsini SCR_XSCALE/YSCALE); the board's draw device (phescdv) leaves the drawing
+// unscaled (the stock scaled draw device draws garbage in this build, native-resolution.md 4.1) and tells the display the scale
+// instead: the top-left 360x640 of the shadow is then shown pixel-doubled, centred on the panel (the spare rows split top and
+// bottom), as the kernel doubling of a 360x640 board does. A native mode (scale 1) shows the whole screen 1:1 again. The pointer
+// is reported in PHYSICAL pixels of that screen (the window server divides by the scale itself).
+static const TInt KCompatW = 360, KCompatH = 640;			// the S60 compatibility screen: the size S60 layout packs exist for (nHD, the board mode 1)
+void X64DisplayCompat(TInt aScale)
+	{
+	if (!TheScreenChunk || XK_DYNRES || aScale < 1 || aScale > 4)
+		return;
+	TheCompatWanted = aScale;
+	TheCompatDfc.Enque();
+	}
+
+static void CompatDfcFn(TAny*)
+	{
+	if (TheCompatWanted == X64Compat || X64Rot)
+		return;
+	X64Compat = TheCompatWanted;
+	if (X64Compat == 1)
+		{
+		X64Scale = Max(1, Min(X64FbW / DispW(), X64FbH / DispH()));
+		X64ActiveW = Min(X64FbW, X64ScreenW);  X64ActiveH = Min(X64FbH, X64ScreenH);
+		PlaceScreen();
+		}
+	else
+		{
+		X64Scale = X64Compat;
+		X64ActiveW = Min(Min(X64ScreenW, KCompatW), X64FbW / X64Scale);  X64ActiveH = Min(Min(X64ScreenH, KCompatH), X64FbH / X64Scale);
+		X64ScreenOx = (X64FbW - X64ActiveW * X64Scale) / 2;
+		X64ScreenOy = (X64FbH - X64ActiveH * X64Scale) / 2;
+		TheScreenOffset = X64ScreenOy * TheFb.iPitch + X64ScreenOx * 4;
+		}
+	memclr((TAny*)TheFbChunk->LinearAddress(), TheFb.iPitch * TheFb.iHeight);
+	MirrorStale();
+	TheDrawnX = TheDrawnY = -1;
+	MarkDirty(0, 0, TheFb.iWidth, TheFb.iHeight);
+	Kern::Printf("[display] compat scale %d: showing %dx%d of the screen x%d at (%d,%d)", X64Compat, X64ActiveW, X64ActiveH, X64Scale, X64ScreenOx, X64ScreenOy);
+	}
+
 // a framebuffer pixel -> the shadow pixel under it (the pointer: xk_keyboard.cpp), clamped to the screen
 void X64FbToScreen(TInt aFx, TInt aFy, TInt& aX, TInt& aY)
 	{
+	if (X64Compat > 1)
+		{
+		aX = Min(Max(aFx - X64ScreenOx, 0), X64ScreenW - 1);
+		aY = Min(Max(aFy - X64ScreenOy, 0), X64ScreenH - 1);
+		return;
+		}
 	TInt x = aFx < X64ScreenOx ? 0 : (aFx - X64ScreenOx) / X64Scale;
 	TInt y = aFy < X64ScreenOy ? 0 : (aFy - X64ScreenOy) / X64Scale;
 	x = Min(x, DispW() - 1);  y = Min(y, DispH() - 1);
