@@ -1,4 +1,4 @@
-# adaptation-x86-64
+# adaptation-x32
 
 This is the port of the Phorepoc OS kernel, Symbian's EKA2, to 64-bit x86 processors. The 2010 release only ran on ARM phones and on an old
 32-bit x86 emulator. We took that emulator's kernel code and made a sibling of it for modern CPUs.
