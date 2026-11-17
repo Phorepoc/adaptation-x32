@@ -69,4 +69,38 @@ static inline TBool XkPciFindOn(TInt aBus, TUint32 aVendorDevice, TInt aClass, S
 static inline TBool XkPciFind(TUint32 aVendorDevice, TInt aClass, SPciLoc& aLoc, TInt aMaxBus = 255)
 	{ return XkPciFindOn(0, aVendorDevice, aClass, aLoc, aMaxBus, 8); }
 
+// The aNth (from 0) function whose class code, subclass and programming interface (config dword 8, bits 31..8:
+// 0x0C0330 = USB xHCI) are aClass24, in the same bus walk as XkPciFindOn. aSeen counts the matches so far.
+static inline TBool XkPciFindNthOn(TInt aBus, TUint32 aClass24, TInt aNth, TInt& aSeen, SPciLoc& aLoc, TInt aMaxBus, TInt aDepth)
+	{
+	for (TInt dev = 0; dev < 32; ++dev)
+		{
+		const TUint32 id0 = XkPciRead(aBus, dev, 0, 0);
+		if ((id0 & 0xFFFF) == 0xFFFF)
+			continue;
+		const TInt fns = (XkPciRead(aBus, dev, 0, 0x0C) & 0x800000) ? 8 : 1;
+		for (TInt fn = 0; fn < fns; ++fn)
+			{
+			const TUint32 id = fn ? XkPciRead(aBus, dev, fn, 0) : id0;
+			if ((id & 0xFFFF) == 0xFFFF)
+				continue;
+			if ((XkPciRead(aBus, dev, fn, 8) >> 8) == aClass24 && aSeen++ == aNth)
+				{
+				aLoc.iBus = aBus; aLoc.iDev = dev; aLoc.iFn = fn;
+				return ETrue;
+				}
+			if (aDepth > 0 && XkPciIsBridge(aBus, dev, fn))
+				{
+				const TInt sec = (TInt)((XkPciRead(aBus, dev, fn, 0x18) >> 8) & 0xFF);
+				if (sec > aBus && sec <= aMaxBus && XkPciFindNthOn(sec, aClass24, aNth, aSeen, aLoc, aMaxBus, aDepth - 1))
+					return ETrue;
+				}
+			}
+		}
+	return EFalse;
+	}
+
+static inline TBool XkPciFindNth(TUint32 aClass24, TInt aNth, SPciLoc& aLoc, TInt aMaxBus = 255)
+	{ TInt seen = 0; return XkPciFindNthOn(0, aClass24, aNth, seen, aLoc, aMaxBus, 8); }
+
 #endif

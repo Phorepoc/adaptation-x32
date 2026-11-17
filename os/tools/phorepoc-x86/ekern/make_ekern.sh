@@ -64,6 +64,8 @@ CXX="gcc -mx32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector -nostdinc -
 # (KBOOT=bit1 KMMU=3 KSCHED=5 KPROC=6 KTHREAD=9 KPANIC=31 ...; default KPANIC|KBOOT).
 DBGDEF=""; [ "${DBG:-1}" = 1 ] && DBGDEF="-D_DEBUG"
 # SCREEN=WxH (X4.26): the display HAL reports a centred WxH screen inside the framebuffer (S60: 360x640)
+# USB_HOST=1 (usb-host-plan.md, PC P1): the FreeBSD USB host on the xHCI controller (tools/phorepoc-x86/usbhost): off by default
+USBDEF=""; USBH=$SRC/usbhost; [ "${USB_HOST:-0}" = 1 ] && USBDEF="-DXK_USB_HOST=1"
 SCREENDEF=""; [ -n "${SCREEN:-}" ] && SCREENDEF="-DXK_SCREEN_W=${SCREEN%x*} -DXK_SCREEN_H=${SCREEN#*x}"
 # SCALE=n (X4.35): the display shows each screen pixel as an n x n block (pixel doubling: a phone screen
 # is tiny on a desktop monitor) and GRUB is asked for a framebuffer of SCREEN x n. Default 2 with SCREEN=;
@@ -79,7 +81,7 @@ if [ -n "${SCREEN:-}" ] && { [ "${SCALE:-2}" -gt 1 ] || { [ "${SCALE:-2}" = 1 ] 
   SCREENDEF="$SCREENDEF -DXK_SCALE=${SCALE:-2}"
 fi
 DEFS="-D__CPU_X86 -D__GCC32__ -D__EPOC32__ -D__SYMBIAN32__ -D__KERNEL_MODE__ -D__IN_KERNEL__ \
-      -D_UNICODE $DBGDEF -DXBOOT_TRACE_MASK=${TRACE:-0x80000002} -DXK_UART_BATCH=${UARTBATCH:-0} -DXK_DEBUG_NMI=${NMI:-0} -DXK_FB_SHADOW=${FBSHADOW:--1} -DXK_DUMP_AT=${DUMP:-0} -DXK_SLIDE_CLOSED=${SLIDE:-0} -DXK_DISK_AS_D=${DISK_AS_D:-0} $SCREENDEF -D__SMP__ -D__MEMMODEL_FLEXIBLE__ -DMM_FLEXIBLE"
+      -D_UNICODE $DBGDEF -DXBOOT_TRACE_MASK=${TRACE:-0x80000002} -DXK_UART_BATCH=${UARTBATCH:-0} -DXK_DEBUG_NMI=${NMI:-0} -DXK_FB_SHADOW=${FBSHADOW:--1} -DXK_DUMP_AT=${DUMP:-0} -DXK_SLIDE_CLOSED=${SLIDE:-0} -DXK_DISK_AS_D=${DISK_AS_D:-0} $SCREENDEF -D__SMP__ -D__MEMMODEL_FLEXIBLE__ -DMM_FLEXIBLE $USBDEF"
 INCS="-I $PORT/x64smp -I $EKA/include/nkernsmp -I $EKA/include/nkernsmp/x86 -I $EKA/include \
       -I $EKA/include/kernel -I $EKA/include/kernel/x86 -I $EKA/include/memmodel/epoc \
       -I $PORT/x64mm -I $EKA/include/memmodel/epoc/flexible -I $EKA/include/memmodel/epoc/flexible/x86 \
@@ -91,9 +93,9 @@ PRE="-include toolchain/x32/port_prelude.h -include e32def.h"
 # a run that changes none of them (every app-debug iteration: only the ROM changes) reuses them. The ROM image
 # object (xk_uimage.o) is rebuilt when romsect.bin is newer; link + ISO are skipped when nothing changed at all.
 OSTAMP=$OUT/image-objs.stamp
-OKEY="$DEFS|$FBDEF|$KKEY|snd${SOUND_TEST:-}|hda${HDADUMP:-}${HDAIMM:-}"
+OKEY="$DEFS|usb${USB_HOST:-0}|$FBDEF|$KKEY|snd${SOUND_TEST:-}|hda${HDADUMP:-}${HDAIMM:-}"
 OBJS_OK=0
-if [ "${KCLEAN:-0}" != 1 ] && [ -f "$OSTAMP" ] && [ "$(cat "$OSTAMP")" = "$OKEY" ]    && [ -z "$(find -L "$PORT" "$EK" "$SRC/boot.S" "$SRC/grub.cfg" "$KINC" -newer "$OSTAMP" -type f 2>/dev/null | head -1)" ]; then
+if [ "${KCLEAN:-0}" != 1 ] && [ -f "$OSTAMP" ] && [ "$(cat "$OSTAMP")" = "$OKEY" ]    && [ -z "$(find -L "$PORT" "$EK" "$USBH" "$SRC/boot.S" "$SRC/grub.cfg" "$KINC" -newer "$OSTAMP" -type f 2>/dev/null | head -1)" ]; then
   echo "[3/5] boot stub + port objects: unchanged -- reused"; OBJS_OK=1
 fi
 if [ "$OBJS_OK" = 0 ]; then
@@ -218,9 +220,22 @@ $CXX -c "$EK/xk_minisec.cpp" -o "$OUT/xk_minisec.o"
 # the REAL exstart extension (unmodified baseline TU), statically linked: only its entry point is renamed
 $CXX $DEFS $INCS $PRE -DKernelModuleEntry=X64ExstartEntry -DInitExtension=X64ExstartInit \
      -c "$EKA/kernel/exstart.cpp" -o "$OUT/exstart.o"
+# USB_HOST=1 (usb-host-plan.md, PC P1): the FreeBSD USB host. The stack (core + kshim, unmodified) and the ARM USB host's seam
+# files (phe_usb_port.h, phe_usb_ekern.cpp, phe_usb_libc.c) come from that repository's tree merged into the OS tree
+# (USBHOST_A64 = its src/phorepoc-arm/a64/usbhost, FB = its third_party/freebsd-usb); the xHCI driver is third_party/freebsd-usb-xhci.
+if [ "${USB_HOST:-0}" = 1 ]; then
+  A64USB="${USBHOST_A64:-src/phorepoc-arm/a64/usbhost}"; FBSD="${FB:-third_party/freebsd-usb}"
+  [ -f "$A64USB/ekern/phe_usb_ekern.cpp" ] && [ -d "$FBSD/stand/kshim" ] \
+    || { echo "USB_HOST=1 needs the ARM USB host's $A64USB and $FBSD in the OS tree (merge that repository in)"; exit 1; }
+  FB="$FBSD" A64USB="$A64USB" bash "$USBH/build_bsd_x32.sh" "$OUT/usbhost" > "$OUT/usbhost.log" 2>&1 || { tail -20 "$OUT/usbhost.log"; exit 1; }
+  UCXX="-I $A64USB -I $USBH/kinc -I $EK"
+  $CXX $DEFS $INCS $MED $UCXX $PRE -c "$USBH/xk_usbhost.cpp" -o "$OUT/xk_usbhost.o"
+  $CXX $DEFS $INCS $MED $UCXX $PRE -c "$A64USB/ekern/phe_usb_ekern.cpp" -o "$OUT/phe_usb_ekern.o"
+fi
 mv "$OSTAMP.new" "$OSTAMP"
 fi
 
+USBOBJS=""; [ "${USB_HOST:-0}" = 1 ] && USBOBJS="$OUT/usbhost/usbhost_bsd.o $OUT/xk_usbhost.o $OUT/phe_usb_ekern.o"
 LSTAMP=$OUT/image.stamp
 LKEY="$OKEY|${SECONDARY:-uexe}"
 if [ "${KCLEAN:-0}" != 1 ] && [ -f "$LSTAMP" ] && [ "$(cat "$LSTAMP")" = "$LKEY" ] && [ -f "$OUT/phorepoc-ekern.iso" ]    && [ ! "$KSTAMP" -nt "$LSTAMP" ] && [ ! "$OSTAMP" -nt "$LSTAMP" ] && [ ! "$OUT/xk_uimage.o" -nt "$LSTAMP" ]    && [ "${SECONDARY:-uexe}" != uexe ]; then
@@ -231,7 +246,7 @@ echo "[4/5] link at EKA2's native addresses"
 NK=$KOUT/nkernsmp
 ld -m elf32_x86_64 -n -z max-page-size=0x1000 -T "$EK/ekern.lds" -Map "$OUT/ekern.map" -o "$OUT/ekern.elf32" \
    "$OUT/boot.o" "$OUT/xboot.o" "$OUT/xk_entry.o" "$OUT/xk_irq.o" "$OUT/xk_smp.o" "$OUT/ncirq.o" "$OUT/xk_interrupt.o" "$OUT/xk_aptramp.o" "$OUT/xk_minisec.o" "$OUT/xk_uimage.o" "$OUT/exstart.o" "$OUT/xk_vectors.o" \
-   "$OUT/locmedia.o" "$OUT/dmasupport.o" "$OUT/iram.o" "$OUT/xk_media.o" "$OUT/xk_ata.o" "$OUT/xk_display.o" "$OUT/xk_keyboard.o" "$OUT/xk_absmouse.o" "$OUT/xk_timesync.o" "$OUT/d_ethernet.o" "$OUT/xk_e1000.o" "$OUT/dpipe.o" "$OUT/xk_pipe.o" "$OUT/soundldd.o" "$OUT/xk_ac97.o" "$OUT/xk_hda.o" "$OUT/xk_sound.o" "$OUT/xk_vmwsvga.o" "$OUT/sgextension.o" "$OUT/sgresource_k.o" "$OUT/sgdevice.o" "$OUT/sgchannel.o" "$OUT/xk_sgresource.o" "$OUT/surfacemanagerdriver.o" "$OUT/surfacemanager_ext.o" "$OUT/cameraldd.o" "$OUT/camerasc_pdd.o" "$OUT/camerasc_sensor.o" "$OUT/xk_camerasc.o" "$OUT/xk_threaddump.o" "$OUT/xk_power.o" "$KOBJ"/*.o \
+   "$OUT/locmedia.o" "$OUT/dmasupport.o" "$OUT/iram.o" "$OUT/xk_media.o" "$OUT/xk_ata.o" "$OUT/xk_display.o" "$OUT/xk_keyboard.o" "$OUT/xk_absmouse.o" "$OUT/xk_timesync.o" "$OUT/d_ethernet.o" "$OUT/xk_e1000.o" "$OUT/dpipe.o" "$OUT/xk_pipe.o" "$OUT/soundldd.o" "$OUT/xk_ac97.o" "$OUT/xk_hda.o" "$OUT/xk_sound.o" "$OUT/xk_vmwsvga.o" "$OUT/sgextension.o" "$OUT/sgresource_k.o" "$OUT/sgdevice.o" "$OUT/sgchannel.o" "$OUT/xk_sgresource.o" "$OUT/surfacemanagerdriver.o" "$OUT/surfacemanager_ext.o" "$OUT/cameraldd.o" "$OUT/camerasc_pdd.o" "$OUT/camerasc_sensor.o" "$OUT/xk_camerasc.o" "$OUT/xk_threaddump.o" "$OUT/xk_power.o" $USBOBJS "$KOBJ"/*.o \
    $NK/nklib.o $NK/nkern.o $NK/nkerns.o $NK/sched.o $NK/dfcs.o $NK/nk_timer.o $NK/nk_irq.o $NK/nk_bal.o \
    $NK/x64s_atomics.o $NK/x64s_ncutils.o $NK/x64s_ncsched.o $NK/x64_ctxsw.o 2>"$OUT/ld.log" \
   || { grep -v "RWX\|GNU-stack\|deprecated" "$OUT/ld.log" | c++filt | head -30; exit 1; }

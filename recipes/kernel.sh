@@ -12,7 +12,7 @@
 #
 # Paths: PHOREPOC_OS_ROOT / PHOREPOC_ADAPTATIONS (the OS tree, merged), PHOREPOC_SYMBIAN (the source),
 # PHOREPOC_BUILD (all output: the ROM from $BUILD/rom, the kernel and ISO in $BUILD/x86/ekern).
-# Settings of the kernel build (make_ekern.sh): DBG=0|1 (default 1), SCREEN=WxH (default 360x640), SCALE=n (default 1), TRACE=<hex>, KCLEAN=1.
+# Settings of the kernel build (make_ekern.sh): USB_HOST=1 (the FreeBSD USB host on the PCI xHCI controller, tools/phorepoc-x86/usbhost; needs the ARM USB host's sources in the OS tree; default off), DBG=0|1 (default 1), SCREEN=WxH (default 360x640), SCALE=n (default 1), TRACE=<hex>, KCLEAN=1.
 set -eu
 PDK="${PHOREPOC_PDK:?run it with phe image recipe kernel -b <board>}"
 export PHOREPOC_CORE="${PHOREPOC_CORE:-$PDK/../core}"
