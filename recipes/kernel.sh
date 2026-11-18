@@ -51,7 +51,7 @@ export SECONDARY=rom
 # a release image traces panics only (the default also prints every ROM page it maps); the phone screen, pixel-doubled
 # 1:1 at first boot (no scrollbars in a normal window); the display then refits the window by the largest integer scale.
 # SCREEN=640x360 = landscape: the launcher runs, but Phonebook 2 faults (null pointer) at that layout width, so portrait stays
-# PHOREPOC_NATIVE=1 (the board's option, adaptation-pc recipes/release.sh): the display shows the panel's own 720x1440 1:1, no
+# PHOREPOC_NATIVE=1 (the board's option, set by its release recipe): the display shows the panel's own 720x1440 1:1, no
 # pixel doubling; the S60 compatibility mode is then the window server's scaled screen mode (the board's wsini)
 if [ "${PHOREPOC_NATIVE:-0}" = 1 ]; then SCREEN="${SCREEN:-720x1440}"; fi
 export TRACE="${TRACE:-0x80000000}" SCREEN="${SCREEN:-360x640}" SCALE="${SCALE:-1}"

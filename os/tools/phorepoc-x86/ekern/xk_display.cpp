@@ -842,7 +842,7 @@ static void RotDfcFn(TAny*)
 					X64Rot, X64FbW, X64FbH, DispW(), DispH(), X64Scale, X64ScreenOx, X64ScreenOy);
 	}
 
-// Native resolution (adaptation-pc PHOREPOC_NATIVE=1): the screen is the panel's own size (720x1440). An S60 screen mode is the
+// Native resolution (the board option PHOREPOC_NATIVE=1): the screen is the panel's own size (720x1440). An S60 screen mode is the
 // window server's 360x640 logical screen at scale 2 (wsini SCR_XSCALE/YSCALE); the board's draw device (phescdv) leaves the drawing
 // unscaled (the stock scaled draw device draws garbage in this build, native-resolution.md 4.1) and tells the display the scale
 // instead: the top-left 360x640 of the shadow is then shown pixel-doubled, centred on the panel (the spare rows split top and
