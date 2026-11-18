@@ -420,6 +420,16 @@ extern "C" void X64_ThreadStart(TAny* aParameterBlock, NThreadFunction aFunction
     if (ipis)
         send_resched_ipis(ipis);
     board_fpu_restore(0);
+    /* The epilogue's resched_thread_divert check covers the first run too: on ARM, __StartThread is reached
+     * through that epilogue (ncthrd.cia's return table). A thread killed before its first resumption
+     * (DoSuspendOrKillT: iCsFunction = ECSDivertPending; e.g. the first thread of a process whose loading failed
+     * after E32Loader::ProcessCreate) must exit here, not enter its thread function: a user thread would go on to
+     * the process entry point through a process code segment that was never set. */
+    if (ss.iCurrentThread->iCsFunction == NThreadBase::ECSDivertPending)
+        {
+        __asm__ __volatile__("sti");
+        do_forced_exit(ss.iCurrentThread);      /* kernel still locked, as it expects; never returns */
+        }
     ss.iKernLockCount = 0;
     __asm__ __volatile__("sti");
     (*aFunction)(aParameterBlock);
