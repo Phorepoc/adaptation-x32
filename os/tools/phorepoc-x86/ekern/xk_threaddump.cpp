@@ -67,7 +67,9 @@ static void Dump()
 	Kern::Printf("[dump] timerq ms %d present %08x holding %d ordered %d completed %d dfc state %04x",
 					tq.iMsCount, tq.iPresent, !tq.iHoldingQ.IsEmpty(), !tq.iOrderedQ.IsEmpty(),
 					!tq.iCompletedQ.IsEmpty(), tq.iDfc.i8816.iHState16);
-	for (TInt i=0; i<c.Count(); ++i)
+	// newest thread first: a boot log that ends before the dump does (the CI first-boot test stops at the home screen, and a dump of
+	// 120 threads takes seconds to print) must still hold the threads of the processes started last -- the ones usually asked about
+	for (TInt i=c.Count()-1; i>=0; --i)
 		DumpThread((DThread*)c[i]);
 	Kern::Printf("[dump] ===== end =====");
 	}
