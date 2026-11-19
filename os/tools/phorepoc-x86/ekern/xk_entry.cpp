@@ -447,6 +447,7 @@ void X64StartUsbHost();				// usbhost/xk_usbhost.cpp: the FreeBSD USB host on th
 #endif
 void X64StartSound();				// xk_sound.cpp: AC'97 or HD Audio (X4.88)
 void X64StartVmwSvga();				// xk_vmwsvga.cpp: read-only VMware SVGA II / SVGA3D capability probe (vm-gpu-options.md S0)
+void X64StartBackdoorChannel();	// xk_bdchannel.cpp: the VMware backdoor request channel (logical device PheBackdoor)
 void X64StartGraphicsResource();	// xk_sgresource.cpp: the sg extension (RSgImage; its LDD is the built-in sgdevice.ldd)
 void X64ArmThreadDump();			// xk_threaddump.cpp: make_ekern.sh DUMP=<s> (X4.27)
 void X64StartPower();				// xk_power.cpp: power controller + handler, ACPI off / reset (X4.74)
@@ -466,6 +467,7 @@ extern "C" TInt X64ExtensionEntry(TInt aReason)
 	X64StartSound();					// X4.88: AC'97 audio (its LDD/PDD load by file name, like the NIC's)
 	X64StartGraphicsResource();			// the sg extension, before any user code (a real ROM starts sgextension.dll here)
 	X64StartVmwSvga();						// S0: logs [svga] lines (a no-op line when the device is absent)
+	X64StartBackdoorChannel();
 	X64ArmThreadDump();
 	SThreadCreateInfo info;
 	info.iType = EThreadSupervisor;
