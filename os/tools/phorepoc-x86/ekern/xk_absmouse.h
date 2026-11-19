@@ -21,5 +21,6 @@ TInt X64AbsMouseRead(SAbsPacket* aOut, TInt aMax);	// packets now available (VMM
 TInt X64AbsMouseBindIrq(TDfc* aDfc);				// VMMDev: interrupts queue aDfc (X4.43)
 TInt X64AbsMouseIrqService();						// in that DFC, first: ack + settle; the pin or -1
 TInt X64VmmHostTimeMs(TInt64& aMs);					// VirtualBox host clock, ms since 1970 UTC (X4.42)
+TUint X64VmmDevPort();								// the VMMDev request port once the device is set up (xk_vmmchannel.cpp), else 0
 
 #endif

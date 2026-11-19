@@ -347,3 +347,9 @@ TInt X64AbsMouseRead(SAbsPacket* aOut, TInt aMax)
 	default:			return 0;
 		}
 	}
+
+// the request port for xk_vmmchannel.cpp (the user-side guest-additions protocols); 0 when the device is not there
+TUint X64VmmDevPort()
+	{
+	return TheKind == EAbsVmmDev ? TheVmmPort : 0;
+	}
