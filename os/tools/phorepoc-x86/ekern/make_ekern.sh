@@ -50,8 +50,8 @@ grep -q "0 FAIL" "$OUT/census.log" || { grep -E "FAIL" "$OUT/census.log" | head;
 grep -q "^  FAIL " "$OUT/census.log" && { grep -A3 "^  FAIL " "$OUT/census.log" | head -12; exit 1; }
 mv "$KSTAMP.new" "$KSTAMP"
 fi
-# the only symbols the kernel objects may still want are the ones xk_entry.cpp (and xk_threaddump.cpp: X64_CrashWho) supply
-if grep -v -x -e "DebugOutputChar(unsigned int)" -e "KPrintf(char const\*, ...)" -e __code_base -e __utext_base -e X64_CrashWho $KOUT/ekern-census-flexible/undefined.txt | grep -q .; then
+# the only symbols the kernel objects may still want are the ones xk_entry.cpp (and xk_threaddump.cpp: X64_CrashWho) supply; xk_irq.cpp: PushExcInfoOnUserStack
+if grep -v -x -e "DebugOutputChar(unsigned int)" -e "KPrintf(char const\*, ...)" -e __code_base -e __utext_base -e X64_CrashWho -e "PushExcInfoOnUserStack(TX86ExcInfo\*, int)" $KOUT/ekern-census-flexible/undefined.txt | grep -q .; then
   echo "unexpected undefined symbols:"; head -20 $KOUT/ekern-census-flexible/undefined.txt; exit 1
 fi
 KOBJ=$KOUT/ekern-census-flexible/obj

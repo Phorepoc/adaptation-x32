@@ -218,13 +218,8 @@ __attribute__((naked)) void TPagingExcTrap::Exception(TInt /*aResult*/)
 			X64_RESUME_NONVOLATILE);
 	}
 
-// Deliver an exception to a user-side handler: push the register record on the USER stack.
-// X64_TODO: TX86ExcInfo (include/kernel/x86/x86.h) is the IA-32 register set; the amd64 record
-// (r8-r15, 64-bit rip/rsp) + its user-side consumer are authored with the ring-3 exception path.
-void PushExcInfoOnUserStack(TX86ExcInfo*, TInt)
-	{
-	NKFault("X64_TODO PushExcInfoOnUserStack", 0);
-	}
+// PushExcInfoOnUserStack (user-side exception delivery) lives in ekern/xk_irq.cpp, next to the trap frame it
+// needs.
 void DumpExcInfo(TX86ExcInfo& a)
 	{
 	Kern::Printf("Exc %d code %08x fault addr %08x", a.iExcId, a.iExcErrorCode, a.iFaultAddress);

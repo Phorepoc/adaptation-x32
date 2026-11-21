@@ -114,6 +114,39 @@ static void SystemTick(TSubScheduler& aSS)
 // passed as their low halves. X64_TODO: a 64-bit record for the debugger / user-side handlers.
 // Anything that cannot be a thread-context fault (boot, inside an ISR, kernel locked, NMI/#DF/#MC)
 // stays with the loud early-trap reporter.
+// User-side exception delivery. kernel/x86/ckernel.cpp's Exc::Dispatch, for a user thread
+// that handles the exception type, calls PushExcInfoOnUserStack(pR, type), then sets pR->iEip = the process
+// re-entry point (_E32Startup) and pR->iEbx = KModuleEntryReasonException. The IA-32 original (ckernel.cia)
+// pushed the TX86ExcInfo words onto the user stack and uc_exe.cia popped them back after User::HandleException.
+// On amd64 the record cannot resume the thread: it has no r8-r15 and (SMP layout) only the low halves of the
+// general registers, which x32 code uses in full too. So the user record is built from the TRAP FRAME itself
+// (found through SX64ExcRecord: every user-mode Dispatch comes from HandleException below) as 64-bit words:
+//   [0] exception type (User::HandleException reads p[0])  [1] vector  [2] error code  [3] fault address
+//   [4..18] rax rcx rdx rbx rbp rsi rdi r8 r9 r10 r11 r12 r13 r14 r15
+//   [19..23] rip cs rflags rsp ss  = an iretq frame: the user stub (xu_exe.cpp) pops [4..18] and irets
+// placed below the interrupted code's 128-byte red zone (SysV), 16-byte aligned for the stub's call.
+struct SX64ExcRecord
+	{
+	TX86ExcInfo iInfo;					// first: Exc::Dispatch is handed &iInfo
+	SX64TrapFrame* iFrame;
+	};
+const TInt KX64UserExcWords = 24;
+
+void PushExcInfoOnUserStack(TX86ExcInfo* aInfo, TInt aType)
+	{
+	const SX64TrapFrame* f = ((const SX64ExcRecord*)aInfo)->iFrame;
+	const TUint64 w[KX64UserExcWords] =
+		{
+		(TUint64)(TUint32)aType, f->iVector, f->iError, (TUint64)aInfo->iFaultAddress,
+		f->iRax, f->iRcx, f->iRdx, f->iRbx, f->iRbp, f->iRsi, f->iRdi,
+		f->iR8, f->iR9, f->iR10, f->iR11, f->iR12, f->iR13, f->iR14, f->iR15,
+		f->iRip, f->iCs, f->iRflags, f->iRsp, f->iSs
+		};
+	const TLinAddr sp = ((TLinAddr)f->iRsp - 128 - sizeof(w)) & ~(TLinAddr)15;
+	umemput((TAny*)sp, w, sizeof(w));		// a bad user stack faults here: the thread dies, as on IA-32
+	aInfo->iEsp3 = (TX86Reg)sp;
+	}
+
 static void HandleException(SX64TrapFrame* aFrame)
 	{
 	const TUint vec = (TUint)aFrame->iVector;
@@ -125,7 +158,9 @@ static void HandleException(SX64TrapFrame* aFrame)
 	TUint64 cr2 = 0;
 	if (vec == 14)
 		__asm__ __volatile__("mov %0, cr2" : "=r"(cr2));
-	TX86ExcInfo info;
+	SX64ExcRecord rec;						// &rec.iInfo == the TX86ExcInfo* Dispatch passes on (PushExcInfoOnUserStack)
+	rec.iFrame = aFrame;
+	TX86ExcInfo& info = rec.iInfo;
 	memclr(&info, sizeof(info));
 	info.iEsp = (TUint32)(TLinAddr)(aFrame+1);  info.iSs = 0x10;
 	info.iFaultAddress = (TUint32)cr2;
