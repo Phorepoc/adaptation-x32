@@ -93,7 +93,7 @@ PRE="-include toolchain/x32/port_prelude.h -include e32def.h"
 # a run that changes none of them (every app-debug iteration: only the ROM changes) reuses them. The ROM image
 # object (xk_uimage.o) is rebuilt when romsect.bin is newer; link + ISO are skipped when nothing changed at all.
 OSTAMP=$OUT/image-objs.stamp
-OKEY="$DEFS|usb${USB_HOST:-0}|$FBDEF|$KKEY|snd${SOUND_TEST:-}|hda${HDADUMP:-}${HDAIMM:-}"
+OKEY="$DEFS|usb${USB_HOST:-0}|$FBDEF|$KKEY|snd${SOUND_TEST:-}|hda${HDADUMP:-}${HDAIMM:-}|ramc${RAMC_DISK:-1}.${RAMC_MB:-128}"
 OBJS_OK=0
 if [ "${KCLEAN:-0}" != 1 ] && [ -f "$OSTAMP" ] && [ "$(cat "$OSTAMP")" = "$OKEY" ]    && [ -z "$(find -L "$PORT" "$EK" "$USBH" "$SRC/boot.S" "$SRC/grub.cfg" "$KINC" -newer "$OSTAMP" -type f 2>/dev/null | head -1)" ]; then
   echo "[3/5] boot stub + port objects: unchanged -- reused"; OBJS_OK=1
@@ -147,8 +147,27 @@ MED="-I $EKA/drivers/locmedia -I $EKA/drivers/locmedia/traces -I $EKA/include/dr
 $CXX $DEFS $INCS $MED $PRE -DInitExtension=InitExtension_locmedia -DKernelModuleEntry=KernelModuleEntry_locmedia \
      -DCreateLogicalDevice=CreateLogicalDevice_locmedia -c "$EKA/drivers/locmedia/locmedia.cpp" -o "$OUT/locmedia.o"
 $CXX $DEFS $INCS $MED $PRE -c "$EKA/drivers/locmedia/dmasupport.cpp" -o "$OUT/dmasupport.o"
-$CXX $DEFS $INCS $MED $PRE -DInitExtension=InitExtension_medint -DKernelModuleEntry=KernelModuleEntry_medint \
-     -DCreatePhysicalDevice=CreatePhysicalDevice_medint -c "$EKA/drivers/medint/iram.cpp" -o "$OUT/iram.o"
+# With no disk the RAM drive is C:, and S60's startup refuses a RAM user drive: SSM's preuiservices list runs
+# customcmds' CheckUserDrive (ordinal 13, critical), which completes KErrNotFound for EMediaRam -> the Fail policy ->
+# a restart, or a boot that idles without WSERV (apsexe dies in RWsSession::Connect). As on the PinePhone board
+# (core tools/kernel/link_ekern.sh): an overlay of iram.cpp reports a fixed-size disk -- EMediaHardDisk, C: grown to
+# RAMC_MB (default 128) at creation, no variable-size attribute, no erase-block overload (FAT aligned its data area
+# to MaxSize and left no free clusters). RAMC_DISK=0 = the unmodified RAM drive.
+IRAM="$EKA/drivers/medint/iram.cpp"
+if [ "${RAMC_DISK:-1}" = 1 ]; then
+  RC=$(( ${RAMC_MB:-128} << 20 ))
+  sed -e "s/caps.iType=EMediaRam;/caps.iType=EMediaHardDisk;/" \
+      -e "s/TInt size=TInternalRamDrive::Size();/TInternalRamDrive::Wait(); if (TInternalRamDrive::Size() < $RC) TInternalRamDrive::Adjust($RC); TInternalRamDrive::Signal(); TInt size=TInternalRamDrive::Size();/" \
+      -e "s/caps.iEraseBlockSize=TInternalRamDrive::MaxSize();/caps.iEraseBlockSize=0;/" \
+      -e "s/caps.iMediaAtt=KMediaAttVariableSize|KMediaAttFormattable;/caps.iMediaAtt=KMediaAttFormattable;/" \
+      "$IRAM" > "$OUT/iram_disk.cpp"
+  for k in "caps.iType=EMediaHardDisk;" "Adjust($RC)" "caps.iEraseBlockSize=0;" "caps.iMediaAtt=KMediaAttFormattable;"; do
+    grep -qF "$k" "$OUT/iram_disk.cpp" || { echo "iram.cpp overlay: '$k' not applied"; exit 1; }
+  done
+  IRAM="$OUT/iram_disk.cpp"
+fi
+$CXX $DEFS $INCS $MED -I "$EKA/drivers/medint" $PRE -DInitExtension=InitExtension_medint -DKernelModuleEntry=KernelModuleEntry_medint \
+     -DCreatePhysicalDevice=CreatePhysicalDevice_medint -c "$IRAM" -o "$OUT/iram.o"
 $CXX $DEFS $INCS $MED $PRE -c "$EK/xk_media.cpp" -o "$OUT/xk_media.o"
 # X4.22: the board's ATA (IDE PIO) hard disk, a second fixed medium behind the same ELOCD
 $CXX $DEFS $INCS $MED $PRE -c "$EK/xk_ata.cpp" -o "$OUT/xk_ata.o"
