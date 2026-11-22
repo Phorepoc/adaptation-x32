@@ -79,7 +79,17 @@ struct TVmwMob
 	};
 
 enum TVmwSvgaControl { EVmwCtrlGetInfo, EVmwCtrlOpenArena, EVmwCtrlSubmit, EVmwCtrlGetDevCaps, EVmwCtrlOpenPool, EVmwCtrlPoolCommit,
-	EVmwCtrlDefineMob, EVmwCtrlDestroyMob, EVmwCtrlScanout };
+	EVmwCtrlDefineMob, EVmwCtrlDestroyMob, EVmwCtrlScanout,
+	EVmwCtrlDefineMobAddr };	// (appended: an older driver answers KErrNotSupported)
+
+// a MOB over memory of the caller's process that lies in a shared chunk (another process's surface buffers, mapped here):
+// page aligned address and size; the driver holds the chunk and pins the pages until the MOB is destroyed
+struct TVmwMobAddr
+	{
+	TUint32 iMobId;
+	TUint32 iAddr;
+	TInt iSize;
+	};
 
 #ifndef __KERNEL_MODE__
 class RVmwSvgaChannel : public RBusLogicalChannel
@@ -96,6 +106,7 @@ public:
 	inline TInt DestroyMob(TUint32 aMobId) { TVmwMob m = { aMobId, 0, 0 }; TPckg<TVmwMob> p(m); return DoControl(EVmwCtrlDestroyMob, &p); }
 	// the client's screen target is the display: 1 = it defined one, 0 = it took it down, 2 = ask. Returns 1 while it is the display, 0 once it is not
 	// (the display driver takes it down itself as soon as the window server draws anything: see TVmwSvga::ScanoutDrop)
+	inline TInt DefineMobAddress(TUint32 aMobId, const TAny* aAddr, TInt aSize) { TVmwMobAddr m = { aMobId, (TUint32)aAddr, aSize }; TPckg<TVmwMobAddr> p(m); return DoControl(EVmwCtrlDefineMobAddr, &p); }
 	inline TInt Scanout(TInt aOp) { return DoControl(EVmwCtrlScanout, (TAny*)aOp); }
 	inline TInt Submit(TVmwSubmit& aSub) { TPckg<TVmwSubmit> p(aSub); return DoControl(EVmwCtrlSubmit, &p); }
 	};

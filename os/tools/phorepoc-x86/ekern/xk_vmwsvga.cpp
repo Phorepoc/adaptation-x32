@@ -102,6 +102,7 @@ public:
 	void ScanoutDrop();
 	TInt EnsureObjectTables();
 	TInt BuildTable(class TVmwPool& aPool, TInt aOff, TInt aSize, TUint32& aDepth, TUint64& aBase, TInt*& aPtPages, TInt& aPtCount);
+	TInt BuildTable(const TPhysAddr* aPhys, TInt aPages, TUint32& aDepth, TUint64& aBase, TInt*& aPtPages, TInt& aPtCount);
 	TInt PtAlloc();
 	void PtFree(TInt aPage);
 	static void Isr(TAny* aPtr);
@@ -382,16 +383,22 @@ void TVmwSvga::PtFree(TInt aPage)
 
 TInt TVmwSvga::BuildTable(TVmwPool& aPool, TInt aOff, TInt aSize, TUint32& aDepth, TUint64& aBase, TInt*& aPtPages, TInt& aPtCount)
 	{
+	return BuildTable(aPool.iPhys + (aOff >> 12), (aSize + 0xFFF) >> 12, aDepth, aBase, aPtPages, aPtCount);
+	}
+
+// the MOB page table over a list of physical pages (a pool range, or the pinned pages of another process's shared chunk)
+TInt TVmwSvga::BuildTable(const TPhysAddr* aPhys, TInt aPages, TUint32& aDepth, TUint64& aBase, TInt*& aPtPages, TInt& aPtCount)
+	{
 	aPtPages = NULL;
 	aPtCount = 0;
-	const TInt n = (aSize + 0xFFF) >> 12, p0 = aOff >> 12;
+	const TInt n = aPages;
 	TBool contiguous = ETrue;
 	for (TInt i = 1; i < n && contiguous; ++i)
-		contiguous = aPool.Phys(p0 + i) == aPool.Phys(p0) + (i << 12);
+		contiguous = aPhys[i] == aPhys[0] + (i << 12);
 	if (contiguous)
 		{
 		aDepth = KMobFmtRange;
-		aBase = (TUint64)aPool.Phys(p0) >> 12;
+		aBase = (TUint64)aPhys[0] >> 12;
 		return KErrNone;
 		}
 	const TInt l1 = (n + 511) / 512;
@@ -417,7 +424,7 @@ TInt TVmwSvga::BuildTable(TVmwPool& aPool, TInt aOff, TInt aSize, TUint32& aDept
 		TUint64* e = (TUint64*)iKPool->Addr(pages[0] << 12, 0x1000);
 		memclr(e, 0x1000);
 		for (TInt i = 0; i < n; ++i)
-			e[i] = (TUint64)aPool.Phys(p0 + i) >> 12;
+			e[i] = (TUint64)aPhys[i] >> 12;
 		aDepth = KMobFmtPt64d1;
 		}
 	else
@@ -430,7 +437,7 @@ TInt TVmwSvga::BuildTable(TVmwPool& aPool, TInt aOff, TInt aSize, TUint32& aDept
 			TUint64* e = (TUint64*)iKPool->Addr(pages[1 + j] << 12, 0x1000);
 			memclr(e, 0x1000);
 			for (TInt i = 0; i < 512 && j * 512 + i < n; ++i)
-				e[i] = (TUint64)aPool.Phys(p0 + j * 512 + i) >> 12;
+				e[i] = (TUint64)aPhys[j * 512 + i] >> 12;
 			}
 		aDepth = KMobFmtPt64d2;
 		}
@@ -519,9 +526,110 @@ public:
 	TVmwPool* iPool;
 	TInt iSlot;
 	TUint32 iSurfHigh, iCtxHigh;
-	struct TMob { TInt iPtCount; TInt* iPtPages; };
+	struct TMob { TInt iPtCount; TInt* iPtPages; DChunk* iChunk; TPhysicalPinObject* iPin; };	// iChunk/iPin: a MOB over another process's chunk (DefineMobAddr)
+	static void ReleaseMob(TMob* aMob);
+	TInt DefineMobAddr(TVmwSvga& aSvga, const TVmwMobAddr& aM);
 	TMob* iMobs[KMobsPerSlot];
 	};
+
+// the pages of a MOB over another process's chunk go back: unpin, then let go of the chunk (the vmwgfx prime-import lifetime: the
+// GPU object holds the memory until it is destroyed)
+void DVmwSvgaChannel::ReleaseMob(TMob* aMob)
+	{
+	if (aMob->iPin)
+		{
+		Kern::UnpinPhysicalMemory(aMob->iPin);
+		Kern::DestroyPhysicalPinObject(aMob->iPin);
+		}
+	if (aMob->iChunk)
+		Kern::ChunkClose(aMob->iChunk);
+	delete aMob;
+	}
+
+// EVmwCtrlDefineMobAddr: a MOB whose page table points at the committed pages of the shared chunk under a user address of the
+// caller (the surface manager's buffers, which libWFC maps): the chunk is opened (held for the MOB's life) and the pages pinned, as the
+// Mali driver's ImportAddress does
+TInt DVmwSvgaChannel::DefineMobAddr(TVmwSvga& aSvga, const TVmwMobAddr& aM)
+	{
+	if (aM.iMobId < MobBase() || aM.iMobId >= MobBase() + KMobsPerSlot || aM.iSize <= 0 || (aM.iAddr & 0xFFF))
+		return KErrArgument;
+	const TInt idx = aM.iMobId - MobBase();
+	const TInt pages = (aM.iSize + 0xFFF) >> 12;
+	NKern::ThreadEnterCS();
+	TInt off = 0;
+	DChunk* chunk = Kern::OpenSharedChunk(&Kern::CurrentThread(), (const TAny*)aM.iAddr, EFalse, off);
+	TInt r = chunk ? KErrNone : KErrBadHandle;
+	TPhysAddr* list = r == KErrNone ? (TPhysAddr*)Kern::Alloc(pages * sizeof(TPhysAddr)) : NULL;
+	if (r == KErrNone && !list)
+		r = KErrNoMemory;
+	TPhysicalPinObject* pin = NULL;
+	if (r == KErrNone)
+		r = Kern::CreatePhysicalPinObject(pin);
+	if (r == KErrNone)
+		{
+		TPhysAddr phys;
+		TUint32 attr = 0;
+		TUint colour = 0;
+		r = Kern::PinPhysicalMemory(pin, (TLinAddr)aM.iAddr, pages << 12, EFalse, phys, list, attr, colour, &Kern::CurrentThread());
+		if (r == KErrNone && phys != KPhysAddrInvalid)
+			for (TInt i = 0; i < pages; ++i)
+				list[i] = phys + (i << 12);
+		if (r != KErrNone)
+			{
+			Kern::DestroyPhysicalPinObject(pin);
+			pin = NULL;
+			}
+		}
+	if (r == KErrNone)
+		{
+		Kern::MutexWait(*aSvga.iLock);
+		if (iMobs[idx])
+			r = KErrAlreadyExists;
+		else
+			{
+			TUint32 depth;
+			TUint64 base;
+			TInt* pt;
+			TInt ptc;
+			r = aSvga.BuildTable(list, pages, depth, base, pt, ptc);
+			if (r == KErrNone)
+				{
+				const TUint32 cmd[7] = { KCmdDefineGbMob64, 20, aM.iMobId, depth, (TUint32)base, (TUint32)(base >> 32), (TUint32)aM.iSize };
+				r = aSvga.KernelCmd(cmd, 7, 0);
+				TMob* rec = r == KErrNone ? new TMob : NULL;
+				if (rec)
+					{
+					rec->iPtCount = ptc;
+					rec->iPtPages = pt;
+					rec->iChunk = chunk;
+					rec->iPin = pin;
+					chunk = NULL;
+					pin = NULL;
+					iMobs[idx] = rec;
+					}
+				else
+					{
+					for (TInt k = 0; k < ptc; ++k)
+						aSvga.PtFree(pt[k]);
+					Kern::Free(pt);
+					if (r == KErrNone)
+						r = KErrNoMemory;
+					}
+				}
+			}
+		Kern::MutexSignal(*aSvga.iLock);
+		}
+	if (pin)
+		{
+		Kern::UnpinPhysicalMemory(pin);
+		Kern::DestroyPhysicalPinObject(pin);
+		}
+	if (chunk)
+		Kern::ChunkClose(chunk);
+	Kern::Free(list);
+	NKern::ThreadLeaveCS();
+	return r;
+	}
 
 TInt DVmwSvgaDevice::Create(DLogicalChannelBase*& aChannel)
 	{
@@ -588,7 +696,7 @@ DVmwSvgaChannel::~DVmwSvgaChannel()
 				for (TInt k = 0; k < iMobs[i]->iPtCount; ++k)
 					s->PtFree(iMobs[i]->iPtPages[k]);
 				Kern::Free(iMobs[i]->iPtPages);
-				delete iMobs[i];
+				ReleaseMob(iMobs[i]);
 				++nMob;
 				}
 		s->iSlots &= ~(1u << iSlot);
@@ -743,6 +851,8 @@ TInt DVmwSvgaChannel::Request(TInt aReqNo, TAny* a1, TAny*)
 					TMob* rec = r == KErrNone ? new TMob : NULL;
 					if (rec)
 						{
+						rec->iChunk = NULL;
+						rec->iPin = NULL;
 						rec->iPtCount = ptc;
 						rec->iPtPages = pt;
 						iMobs[idx] = rec;
@@ -769,11 +879,18 @@ TInt DVmwSvgaChannel::Request(TInt aReqNo, TAny* a1, TAny*)
 			for (TInt k = 0; k < rec->iPtCount; ++k)
 				s.PtFree(rec->iPtPages[k]);
 			Kern::Free(rec->iPtPages);
-			delete rec;
+			ReleaseMob(rec);
 			}
 		Kern::MutexSignal(*s.iLock);
 		NKern::ThreadLeaveCS();
 		return r;
+		}
+	case EVmwCtrlDefineMobAddr:
+		{
+		TVmwMobAddr m;
+		TPckg<TVmwMobAddr> p(m);
+		TInt r = Kern::ThreadDesRead(t, a1, p, 0, KChunkShiftBy0);
+		return r != KErrNone ? r : DefineMobAddr(s, m);
 		}
 	case EVmwCtrlSubmit:
 		{
