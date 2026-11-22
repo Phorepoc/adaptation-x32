@@ -152,6 +152,10 @@ $CXX $DEFS $INCS $MED $PRE -DInitExtension=InitExtension_medint -DKernelModuleEn
 $CXX $DEFS $INCS $MED $PRE -c "$EK/xk_media.cpp" -o "$OUT/xk_media.o"
 # X4.22: the board's ATA (IDE PIO) hard disk, a second fixed medium behind the same ELOCD
 $CXX $DEFS $INCS $MED $PRE -c "$EK/xk_ata.cpp" -o "$OUT/xk_ata.o"
+# the AHCI (SATA) back end xk_ata.cpp uses when there is no IDE master (real PCs; QEMU -device ahci)
+$CXX $DEFS $INCS $PRE -c "$EK/xk_ahci.cpp" -o "$OUT/xk_ahci.o"
+# a Goodix GT9xx touch screen on an Intel LPSS DesignWare I2C controller (xk_dwi2c.h, xk_gt9xx.h); TOUCH_ROTATE=n quarter turns
+$CXX $DEFS $INCS $PRE -DXK_TOUCH_ROTATE=${TOUCH_ROTATE:-0} -c "$EK/xk_i2ctouch.cpp" -o "$OUT/xk_i2ctouch.o"
 # X4.18: the board's display HAL (VGA text) and PC keyboard (i8042). The keyboard reuses Syborg's
 # PC-set-1 -> EStdKey table, cut verbatim out of syborg_keyboard.h (its initializer braces only).
 KBDH="${KQEMU:-baseline/symbian-2010/oss.FCL.sf.adapt.Qemu}"/baseport/syborg/keyboard/syborg_keyboard.h
@@ -246,7 +250,7 @@ echo "[4/5] link at EKA2's native addresses"
 NK=$KOUT/nkernsmp
 ld -m elf32_x86_64 -n -z max-page-size=0x1000 -T "$EK/ekern.lds" -Map "$OUT/ekern.map" -o "$OUT/ekern.elf32" \
    "$OUT/boot.o" "$OUT/xboot.o" "$OUT/xk_entry.o" "$OUT/xk_irq.o" "$OUT/xk_smp.o" "$OUT/ncirq.o" "$OUT/xk_interrupt.o" "$OUT/xk_aptramp.o" "$OUT/xk_minisec.o" "$OUT/xk_uimage.o" "$OUT/exstart.o" "$OUT/xk_vectors.o" \
-   "$OUT/locmedia.o" "$OUT/dmasupport.o" "$OUT/iram.o" "$OUT/xk_media.o" "$OUT/xk_ata.o" "$OUT/xk_display.o" "$OUT/xk_keyboard.o" "$OUT/xk_absmouse.o" "$OUT/xk_timesync.o" "$OUT/d_ethernet.o" "$OUT/xk_e1000.o" "$OUT/dpipe.o" "$OUT/xk_pipe.o" "$OUT/soundldd.o" "$OUT/xk_ac97.o" "$OUT/xk_hda.o" "$OUT/xk_sound.o" "$OUT/xk_vmwsvga.o" "$OUT/sgextension.o" "$OUT/sgresource_k.o" "$OUT/sgdevice.o" "$OUT/sgchannel.o" "$OUT/xk_sgresource.o" "$OUT/surfacemanagerdriver.o" "$OUT/surfacemanager_ext.o" "$OUT/cameraldd.o" "$OUT/camerasc_pdd.o" "$OUT/camerasc_sensor.o" "$OUT/xk_camerasc.o" "$OUT/xk_threaddump.o" "$OUT/xk_power.o" $USBOBJS "$KOBJ"/*.o \
+   "$OUT/locmedia.o" "$OUT/dmasupport.o" "$OUT/iram.o" "$OUT/xk_media.o" "$OUT/xk_ata.o" "$OUT/xk_ahci.o" "$OUT/xk_i2ctouch.o" "$OUT/xk_display.o" "$OUT/xk_keyboard.o" "$OUT/xk_absmouse.o" "$OUT/xk_timesync.o" "$OUT/d_ethernet.o" "$OUT/xk_e1000.o" "$OUT/dpipe.o" "$OUT/xk_pipe.o" "$OUT/soundldd.o" "$OUT/xk_ac97.o" "$OUT/xk_hda.o" "$OUT/xk_sound.o" "$OUT/xk_vmwsvga.o" "$OUT/sgextension.o" "$OUT/sgresource_k.o" "$OUT/sgdevice.o" "$OUT/sgchannel.o" "$OUT/xk_sgresource.o" "$OUT/surfacemanagerdriver.o" "$OUT/surfacemanager_ext.o" "$OUT/cameraldd.o" "$OUT/camerasc_pdd.o" "$OUT/camerasc_sensor.o" "$OUT/xk_camerasc.o" "$OUT/xk_threaddump.o" "$OUT/xk_power.o" $USBOBJS "$KOBJ"/*.o \
    $NK/nklib.o $NK/nkern.o $NK/nkerns.o $NK/sched.o $NK/dfcs.o $NK/nk_timer.o $NK/nk_irq.o $NK/nk_bal.o \
    $NK/x64s_atomics.o $NK/x64s_ncutils.o $NK/x64s_ncsched.o $NK/x64_ctxsw.o 2>"$OUT/ld.log" \
   || { grep -v "RWX\|GNU-stack\|deprecated" "$OUT/ld.log" | c++filt | head -30; exit 1; }
