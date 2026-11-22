@@ -68,6 +68,11 @@ DBGDEF=""; [ "${DBG:-1}" = 1 ] && DBGDEF="-D_DEBUG"
 USBDEF=""; USBH=$SRC/usbhost; [ "${USB_HOST:-0}" = 1 ] && USBDEF="-DXK_USB_HOST=1"
 # I915=1 (gpd-win2-port.md section 9): the Intel Gen9 render-only driver (xk_i915.cpp, device "I915"): off by default
 [ "${I915:-0}" = 1 ] && USBDEF="$USBDEF -DXK_I915=1"
+# the GPD Win 2 test rig (gpd-win2-port.md section 10): NETLOG=1 = the kernel log + a command channel over a USB Ethernet
+# adapter (usbhost/xk_netlog.cpp on pheusb's RTL8152/8153 driver; needs USB_HOST=1; NETLOG_TOKEN=<u32> = the command
+# token, 0 = any); TCO=1 = the chipset watchdog (xk_tco.cpp; TCO_SECS = the reset time, default 30)
+[ "${NETLOG:-0}" = 1 ] && [ "${USB_HOST:-0}" = 1 ] && USBDEF="$USBDEF -DXK_NETLOG=1 -DNETLOG_TOKEN=${NETLOG_TOKEN:-0}u"
+[ "${TCO:-0}" = 1 ] && USBDEF="$USBDEF -DXK_TCO=1 -DXK_TCO_SECS=${TCO_SECS:-30} -DXK_TCO_TEST=${TCO_TEST:-0}"
 SCREENDEF=""; [ -n "${SCREEN:-}" ] && SCREENDEF="-DXK_SCREEN_W=${SCREEN%x*} -DXK_SCREEN_H=${SCREEN#*x}"
 # SCALE=n (X4.35): the display shows each screen pixel as an n x n block (pixel doubling: a phone screen
 # is tiny on a desktop monitor) and GRUB is asked for a framebuffer of SCREEN x n. Default 2 with SCREEN=;
@@ -95,7 +100,7 @@ PRE="-include toolchain/x32/port_prelude.h -include e32def.h"
 # a run that changes none of them (every app-debug iteration: only the ROM changes) reuses them. The ROM image
 # object (xk_uimage.o) is rebuilt when romsect.bin is newer; link + ISO are skipped when nothing changed at all.
 OSTAMP=$OUT/image-objs.stamp
-OKEY="$DEFS|usb${USB_HOST:-0}|i915${I915:-0}|$FBDEF|$KKEY|snd${SOUND_TEST:-}|hda${HDADUMP:-}${HDAIMM:-}|ramc${RAMC_DISK:-1}.${RAMC_MB:-128}"
+OKEY="$DEFS|usb${USB_HOST:-0}|i915${I915:-0}|nl${NETLOG:-0}.${NETLOG_TOKEN:-0}|tco${TCO:-0}.${TCO_SECS:-30}.${TCO_TEST:-0}|$FBDEF|$KKEY|snd${SOUND_TEST:-}|hda${HDADUMP:-}${HDAIMM:-}|ramc${RAMC_DISK:-1}.${RAMC_MB:-128}"
 OBJS_OK=0
 if [ "${KCLEAN:-0}" != 1 ] && [ -f "$OSTAMP" ] && [ "$(cat "$OSTAMP")" = "$OKEY" ]    && [ -z "$(find -L "$PORT" "$EK" "$USBH" "$SRC/boot.S" "$SRC/grub.cfg" "$KINC" -newer "$OSTAMP" -type f 2>/dev/null | head -1)" ]; then
   echo "[3/5] boot stub + port objects: unchanged -- reused"; OBJS_OK=1
@@ -241,6 +246,7 @@ $CXX $DEFS $INCS $PRE -c "$EK/xk_sgresource.cpp" -o "$OUT/xk_sgresource.o"
 # X4.27 debug aid: DUMP=<s> dumps every thread (state + symbolizable user stack) once, s seconds in
 $CXX $DEFS $INCS $PRE -fno-access-control -c "$EK/xk_threaddump.cpp" -o "$OUT/xk_threaddump.o"
 I915OBJS=""; if [ "${I915:-0}" = 1 ]; then $CXX $DEFS $INCS $PRE -c "$EK/xk_i915.cpp" -o "$OUT/xk_i915.o"; I915OBJS="$OUT/xk_i915.o"; fi
+if [ "${TCO:-0}" = 1 ]; then $CXX $DEFS $INCS $PRE -c "$EK/xk_tco.cpp" -o "$OUT/xk_tco.o"; I915OBJS="$I915OBJS $OUT/xk_tco.o"; fi
 # the first user program: no kernel headers, no kernel symbols
 $CXX -c "$EK/xk_minisec.cpp" -o "$OUT/xk_minisec.o"
 # the REAL exstart extension (unmodified baseline TU), statically linked: only its entry point is renamed
@@ -253,16 +259,18 @@ if [ "${USB_HOST:-0}" = 1 ]; then
   UH="${PHEUSB_UH:-src/usbhost}"; FBSD="${FB:-third_party/freebsd-usb}"
   [ -f "$UH/ekern/phe_usb_ekern.cpp" ] && [ -f "$UH/build_bsd.sh" ] && [ -d "$FBSD/stand/kshim" ] \
     || { echo "USB_HOST=1 needs the pheusb layer ($UH, $FBSD) in the OS tree (the board's REPOS)"; exit 1; }
-  ARCH=x32 HC=xhci FB="$FBSD" bash "$UH/build_bsd.sh" "$OUT/usbhost" > "$OUT/usbhost.log" 2>&1 || { tail -20 "$OUT/usbhost.log"; exit 1; }
+  ARCH=x32 HC=xhci URE="${NETLOG:-0}" FB="$FBSD" bash "$UH/build_bsd.sh" "$OUT/usbhost" > "$OUT/usbhost.log" 2>&1 || { tail -20 "$OUT/usbhost.log"; exit 1; }
   UCXX="-I $UH -I $EK -DXK_USB_NO_LDD $SCREENDEF"
   $CXX $DEFS $INCS $MED $UCXX $PRE -c "$USBH/xk_usbhost.cpp" -o "$OUT/xk_usbhost.o"
   $CXX $DEFS $INCS $MED $UCXX $PRE -c "$UH/ekern/phe_usb_ekern.cpp" -o "$OUT/phe_usb_ekern.o"
   $CXX $DEFS $INCS $MED $UCXX $PRE -c "$UH/ekern/phe_usb_hid_ekern.cpp" -o "$OUT/phe_usb_hid_ekern.o"
+  [ "${NETLOG:-0}" = 1 ] && $CXX $DEFS $INCS $MED $UCXX $PRE -c "$USBH/xk_netlog.cpp" -o "$OUT/xk_netlog.o"
 fi
 mv "$OSTAMP.new" "$OSTAMP"
 fi
 
 USBOBJS=""; [ "${USB_HOST:-0}" = 1 ] && USBOBJS="$OUT/usbhost/usbhost_bsd.o $OUT/xk_usbhost.o $OUT/phe_usb_ekern.o $OUT/phe_usb_hid_ekern.o"
+[ "${USB_HOST:-0}" = 1 ] && [ "${NETLOG:-0}" = 1 ] && USBOBJS="$USBOBJS $OUT/xk_netlog.o"
 LSTAMP=$OUT/image.stamp
 LKEY="$OKEY|${SECONDARY:-uexe}"
 if [ "${KCLEAN:-0}" != 1 ] && [ -f "$LSTAMP" ] && [ "$(cat "$LSTAMP")" = "$LKEY" ] && [ -f "$OUT/phorepoc-ekern.iso" ]    && [ ! "$KSTAMP" -nt "$LSTAMP" ] && [ ! "$OSTAMP" -nt "$LSTAMP" ] && [ ! "$OUT/xk_uimage.o" -nt "$LSTAMP" ]    && [ "${SECONDARY:-uexe}" != uexe ]; then

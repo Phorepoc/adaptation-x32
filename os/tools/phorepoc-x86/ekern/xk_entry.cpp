@@ -34,8 +34,14 @@ static inline void outb(TUint16 aPort, TUint8 aVal)
 static inline TUint8 inb(TUint16 aPort)
 	{ TUint8 v; __asm__ __volatile__("in al, dx" : "=a"(v) : "d"(aPort)); return v; }
 
+#ifdef XK_NETLOG
+void X64NetLogChar(TUint aChar);			// usbhost/xk_netlog.cpp: the same bytes to the debug link's ring
+#endif
 void DebugOutputChar(TUint aChar)
 	{
+#ifdef XK_NETLOG
+	X64NetLogChar(aChar);
+#endif
 #if XK_UART_BATCH
 	// 16550 with FIFOs (FCR=0xC7): THRE = the transmit FIFO is empty, so after one poll 16 bytes may follow with no status read.
 	// Under a hypervisor every port access is a VM exit: ~1 exit per byte instead of 2 (UARTBATCH=1 in make_ekern.sh).
@@ -449,6 +455,8 @@ void X64StartUsbHost();				// usbhost/xk_usbhost.cpp: the FreeBSD USB host on th
 #ifdef XK_I915
 void X64StartI915();				// xk_i915.cpp: the Intel Gen9 render engine (I915=1; gpd-win2)
 #endif
+void X64StartTco();					// xk_tco.cpp: the chipset watchdog (TCO=1)
+void X64StartNetLog();				// usbhost/xk_netlog.cpp: the debug link (NETLOG=1)
 void X64StartSound();				// xk_sound.cpp: AC'97 or HD Audio (X4.88)
 void X64StartVmwSvga();				// xk_vmwsvga.cpp: read-only VMware SVGA II / SVGA3D capability probe (vm-gpu-options.md S0)
 void X64StartGraphicsResource();	// xk_sgresource.cpp: the sg extension (RSgImage; its LDD is the built-in sgdevice.ldd)
@@ -465,6 +473,12 @@ extern "C" TInt X64ExtensionEntry(TInt aReason)
 	X64StartKeyboard();
 	X64StartI2cTouch();
 	X64StartNetwork();					// X4.47: the e1000 NIC + the Ethernet LDD
+#ifdef XK_TCO
+	X64StartTco();						// the chipset watchdog: a hung kernel resets (the GPD Win 2 rig)
+#endif
+#ifdef XK_NETLOG
+	X64StartNetLog();					// the debug link's sink, before the USB host finds the adapter
+#endif
 #ifdef XK_USB_HOST
 	X64StartUsbHost();
 #endif

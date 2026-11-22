@@ -684,6 +684,12 @@ static TInt ScreenPitch()
 	{
 	return TheScreenChunk ? ScreenWpl() * 4 : TheFb.iPitch;
 	}
+// the OS screen for a debug capture (usbhost/xk_netlog.cpp): 32-bit XRGB, aW x aH, aPitch bytes a row; aAddr 0 = none yet
+void X64ScreenInfo(TLinAddr& aAddr, TInt& aW, TInt& aH, TInt& aPitch)
+	{
+	aAddr = (TheScreenChunk || TheFbChunk) ? ScreenAddress() : 0;
+	aW = X64ScreenW; aH = X64ScreenH; aPitch = ScreenPitch();
+	}
 
 // ---- X4.35: mode setting, Bochs VBE "DISPI" -------------------------------------------------------------
 // GRUB can only pick from the VBE BIOS's mode list (QEMU: asked 720x1280, got 1280x800), and a scaled
