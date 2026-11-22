@@ -163,22 +163,52 @@ const TUint32 KInitStackSize	= 0x4000;	// 64-bit frames: 4x the IA-32 0x1000
 const TUint32 KHeapSizeMin		= 0x00100000;
 const TUint32 KHeapSizeMax		= 0x01000000;
 
-static TUint32 RamTopFromMultiboot(TUint32 aInfo)
+static TUint32 RamTopFromMultiboot(TUint32 aInfo, TUint32 aFrom)
 	{
 	// multiboot2 info: u32 total_size, u32 reserved, then tags { u32 type, u32 size, ... } 8-aligned.
 	// tag 4 = basic meminfo { mem_lower KiB, mem_upper KiB (above 1 MiB) }.
+	// tag 6 = the memory map { u32 entry_size, u32 version, then { u64 base, u64 length, u32 type (1 = available), u32 } }.
+	// The bank is one run of RAM, so its top is the end of the available run that holds aFrom (the end of the ROM image and
+	// the root tables), adjacent available entries merged. With BIOS that is mem_upper's run from 1 MiB, unchanged. Under
+	// UEFI mem_upper ends at the first firmware hole (OVMF: ACPI NVS at 8 MiB, below the ROM's end), so the map decides.
 	TUint32 total = *(TUint32*)aInfo;
+	TUint64 upper = 0;
+	TUint32* mmap = 0;
 	for (TUint32 off=8; off<total; )
 		{
 		TUint32* tag = (TUint32*)(aInfo+off);
 		if (tag[0]==0)
 			break;
 		if (tag[0]==4)
-			return 0x100000u + (tag[3]<<10);
+			upper = 0x100000u + ((TUint64)tag[3]<<10);
+		if (tag[0]==6)
+			mmap = tag;
 		off += (tag[1]+7)&~7u;
 		}
-	Die("no multiboot2 meminfo tag");
-	return 0;
+	if (!upper && !mmap)
+		Die("no multiboot2 meminfo tag");
+	TUint64 top = upper > aFrom ? upper : 0;
+	if (mmap && mmap[2] >= 24)
+		{
+		const TUint32 n = (mmap[1] - 16) / mmap[2];
+		TUint64 at = aFrom;
+		for (TBool grew = ETrue; grew; )
+			{
+			grew = EFalse;
+			for (TUint32 i = 0; i < n; ++i)
+				{
+				const TUint32* e = (const TUint32*)((TUint8*)mmap + 16 + i*mmap[2]);
+				const TUint64 base = e[0] | ((TUint64)e[1] << 32), end = base + (e[2] | ((TUint64)e[3] << 32));
+				if (e[4] == 1 && base <= at && end > at && base < 0x100000000ull)
+					{ at = end < 0x100000000ull ? end : 0xFFFFF000ull; grew = ETrue; }
+				}
+			}
+		if (at > top)
+			top = at;
+		}
+	if (top <= aFrom)
+		Die("no RAM above the ROM image");
+	return (TUint32)top;
 	}
 
 // The linear framebuffer GRUB set up for boot.S's multiboot2 framebuffer request (tag 8:
@@ -344,12 +374,12 @@ extern "C" void kmain(TUint32 aMultibootInfo)
 
 	// ---- RAM: one bank, from just above the ROM image + the per-CPU root tables to the top.
 	// (bootmain.asm "ROM is actually in RAM": the ROM area is excised from the RAM list.)
-	TUint32 ramTop = RamTopFromMultiboot(aMultibootInfo) & ~(TUint32)KChunkMask;
+	const TUint32 rootPhys = romPhys + romSize;	// 2 pages per CPU, NOT in the RAM bank
+	TUint32 ramTop = RamTopFromMultiboot(aMultibootInfo, rootPhys + KX64MaxCpus*2*KPageSize) & ~(TUint32)KChunkMask;
 	// iTotalRamSize (and much of the kernel's RAM arithmetic) is a TInt, TPhysAddr 32 bits: below 2 GiB.
 	// More needs the LP64 kernel (64-bit TPhysAddr) -- x86-64-port.md X4.34.
 	if (ramTop > 0x7FE00000u)
 		ramTop = 0x7FE00000u;
-	const TUint32 rootPhys = romPhys + romSize;	// 2 pages per CPU, NOT in the RAM bank
 	Zero(rootPhys, KX64MaxCpus*2*KPageSize);
 	BankBase = (rootPhys + KX64MaxCpus*2*KPageSize + KChunkMask) & ~(TUint32)KChunkMask;
 	BankEnd = ramTop;
