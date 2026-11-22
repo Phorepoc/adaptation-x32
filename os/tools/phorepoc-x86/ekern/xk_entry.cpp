@@ -446,6 +446,9 @@ void X64StartNetwork();				// xk_e1000.cpp: the e1000 NIC + Ethernet LDD (X4.47)
 #ifdef XK_USB_HOST
 void X64StartUsbHost();				// usbhost/xk_usbhost.cpp: the FreeBSD USB host on the xHCI controller (USB_HOST=1)
 #endif
+#ifdef XK_I915
+void X64StartI915();				// xk_i915.cpp: the Intel Gen9 render engine (I915=1; gpd-win2)
+#endif
 void X64StartSound();				// xk_sound.cpp: AC'97 or HD Audio (X4.88)
 void X64StartVmwSvga();				// xk_vmwsvga.cpp: read-only VMware SVGA II / SVGA3D capability probe (vm-gpu-options.md S0)
 void X64StartGraphicsResource();	// xk_sgresource.cpp: the sg extension (RSgImage; its LDD is the built-in sgdevice.ldd)
@@ -464,6 +467,9 @@ extern "C" TInt X64ExtensionEntry(TInt aReason)
 	X64StartNetwork();					// X4.47: the e1000 NIC + the Ethernet LDD
 #ifdef XK_USB_HOST
 	X64StartUsbHost();
+#endif
+#ifdef XK_I915
+	X64StartI915();
 #endif
 	X64StartSound();					// X4.88: AC'97 audio (its LDD/PDD load by file name, like the NIC's)
 	X64StartGraphicsResource();			// the sg extension, before any user code (a real ROM starts sgextension.dll here)

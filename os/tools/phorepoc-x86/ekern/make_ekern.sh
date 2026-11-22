@@ -66,6 +66,8 @@ DBGDEF=""; [ "${DBG:-1}" = 1 ] && DBGDEF="-D_DEBUG"
 # SCREEN=WxH (X4.26): the display HAL reports a centred WxH screen inside the framebuffer (S60: 360x640)
 # USB_HOST=1 (usb-host-plan.md, PC P1): the FreeBSD USB host on the xHCI controller (tools/phorepoc-x86/usbhost): off by default
 USBDEF=""; USBH=$SRC/usbhost; [ "${USB_HOST:-0}" = 1 ] && USBDEF="-DXK_USB_HOST=1"
+# I915=1 (gpd-win2-port.md section 9): the Intel Gen9 render-only driver (xk_i915.cpp, device "I915"): off by default
+[ "${I915:-0}" = 1 ] && USBDEF="$USBDEF -DXK_I915=1"
 SCREENDEF=""; [ -n "${SCREEN:-}" ] && SCREENDEF="-DXK_SCREEN_W=${SCREEN%x*} -DXK_SCREEN_H=${SCREEN#*x}"
 # SCALE=n (X4.35): the display shows each screen pixel as an n x n block (pixel doubling: a phone screen
 # is tiny on a desktop monitor) and GRUB is asked for a framebuffer of SCREEN x n. Default 2 with SCREEN=;
@@ -93,7 +95,7 @@ PRE="-include toolchain/x32/port_prelude.h -include e32def.h"
 # a run that changes none of them (every app-debug iteration: only the ROM changes) reuses them. The ROM image
 # object (xk_uimage.o) is rebuilt when romsect.bin is newer; link + ISO are skipped when nothing changed at all.
 OSTAMP=$OUT/image-objs.stamp
-OKEY="$DEFS|usb${USB_HOST:-0}|$FBDEF|$KKEY|snd${SOUND_TEST:-}|hda${HDADUMP:-}${HDAIMM:-}|ramc${RAMC_DISK:-1}.${RAMC_MB:-128}"
+OKEY="$DEFS|usb${USB_HOST:-0}|i915${I915:-0}|$FBDEF|$KKEY|snd${SOUND_TEST:-}|hda${HDADUMP:-}${HDAIMM:-}|ramc${RAMC_DISK:-1}.${RAMC_MB:-128}"
 OBJS_OK=0
 if [ "${KCLEAN:-0}" != 1 ] && [ -f "$OSTAMP" ] && [ "$(cat "$OSTAMP")" = "$OKEY" ]    && [ -z "$(find -L "$PORT" "$EK" "$USBH" "$SRC/boot.S" "$SRC/grub.cfg" "$KINC" -newer "$OSTAMP" -type f 2>/dev/null | head -1)" ]; then
   echo "[3/5] boot stub + port objects: unchanged -- reused"; OBJS_OK=1
@@ -238,6 +240,7 @@ $CXX $DEFS $INCS $SMI $PRE -c "$KSM/src/extension.cpp" -o "$OUT/surfacemanager_e
 $CXX $DEFS $INCS $PRE -c "$EK/xk_sgresource.cpp" -o "$OUT/xk_sgresource.o"
 # X4.27 debug aid: DUMP=<s> dumps every thread (state + symbolizable user stack) once, s seconds in
 $CXX $DEFS $INCS $PRE -fno-access-control -c "$EK/xk_threaddump.cpp" -o "$OUT/xk_threaddump.o"
+I915OBJS=""; if [ "${I915:-0}" = 1 ]; then $CXX $DEFS $INCS $PRE -c "$EK/xk_i915.cpp" -o "$OUT/xk_i915.o"; I915OBJS="$OUT/xk_i915.o"; fi
 # the first user program: no kernel headers, no kernel symbols
 $CXX -c "$EK/xk_minisec.cpp" -o "$OUT/xk_minisec.o"
 # the REAL exstart extension (unmodified baseline TU), statically linked: only its entry point is renamed
@@ -270,7 +273,7 @@ echo "[4/5] link at EKA2's native addresses"
 NK=$KOUT/nkernsmp
 ld -m elf32_x86_64 -n -z max-page-size=0x1000 -T "$EK/ekern.lds" -Map "$OUT/ekern.map" -o "$OUT/ekern.elf32" \
    "$OUT/boot.o" "$OUT/xboot.o" "$OUT/xk_entry.o" "$OUT/xk_irq.o" "$OUT/xk_smp.o" "$OUT/ncirq.o" "$OUT/xk_interrupt.o" "$OUT/xk_aptramp.o" "$OUT/xk_minisec.o" "$OUT/xk_uimage.o" "$OUT/exstart.o" "$OUT/xk_vectors.o" \
-   "$OUT/locmedia.o" "$OUT/dmasupport.o" "$OUT/iram.o" "$OUT/xk_media.o" "$OUT/xk_ata.o" "$OUT/xk_ahci.o" "$OUT/xk_i2ctouch.o" "$OUT/xk_display.o" "$OUT/xk_keyboard.o" "$OUT/xk_absmouse.o" "$OUT/xk_timesync.o" "$OUT/d_ethernet.o" "$OUT/xk_e1000.o" "$OUT/dpipe.o" "$OUT/xk_pipe.o" "$OUT/soundldd.o" "$OUT/xk_ac97.o" "$OUT/xk_hda.o" "$OUT/xk_sound.o" "$OUT/xk_vmwsvga.o" "$OUT/sgextension.o" "$OUT/sgresource_k.o" "$OUT/sgdevice.o" "$OUT/sgchannel.o" "$OUT/xk_sgresource.o" "$OUT/surfacemanagerdriver.o" "$OUT/surfacemanager_ext.o" "$OUT/cameraldd.o" "$OUT/camerasc_pdd.o" "$OUT/camerasc_sensor.o" "$OUT/xk_camerasc.o" "$OUT/xk_threaddump.o" "$OUT/xk_power.o" $USBOBJS "$KOBJ"/*.o \
+   "$OUT/locmedia.o" "$OUT/dmasupport.o" "$OUT/iram.o" "$OUT/xk_media.o" "$OUT/xk_ata.o" "$OUT/xk_ahci.o" "$OUT/xk_i2ctouch.o" "$OUT/xk_display.o" "$OUT/xk_keyboard.o" "$OUT/xk_absmouse.o" "$OUT/xk_timesync.o" "$OUT/d_ethernet.o" "$OUT/xk_e1000.o" "$OUT/dpipe.o" "$OUT/xk_pipe.o" "$OUT/soundldd.o" "$OUT/xk_ac97.o" "$OUT/xk_hda.o" "$OUT/xk_sound.o" "$OUT/xk_vmwsvga.o" "$OUT/sgextension.o" "$OUT/sgresource_k.o" "$OUT/sgdevice.o" "$OUT/sgchannel.o" "$OUT/xk_sgresource.o" "$OUT/surfacemanagerdriver.o" "$OUT/surfacemanager_ext.o" "$OUT/cameraldd.o" "$OUT/camerasc_pdd.o" "$OUT/camerasc_sensor.o" "$OUT/xk_camerasc.o" "$OUT/xk_threaddump.o" "$OUT/xk_power.o" $USBOBJS $I915OBJS "$KOBJ"/*.o \
    $NK/nklib.o $NK/nkern.o $NK/nkerns.o $NK/sched.o $NK/dfcs.o $NK/nk_timer.o $NK/nk_irq.o $NK/nk_bal.o \
    $NK/x64s_atomics.o $NK/x64s_ncutils.o $NK/x64s_ncsched.o $NK/x64_ctxsw.o 2>"$OUT/ld.log" \
   || { grep -v "RWX\|GNU-stack\|deprecated" "$OUT/ld.log" | c++filt | head -30; exit 1; }
