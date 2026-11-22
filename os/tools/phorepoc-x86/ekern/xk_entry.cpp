@@ -441,6 +441,7 @@ static TInt ProbeThread(TAny*)
 void X64StartMediaExtensions();		// xk_media.cpp: ELOCD + the IRAM drive (X4.17)
 void X64StartDisplay();				// xk_display.cpp: EHalGroupDisplay, VGA text (X4.18)
 void X64StartKeyboard();			// xk_keyboard.cpp: i8042 -> Kern::AddEvent (X4.18)
+void X64StartI2cTouch();			// xk_i2ctouch.cpp: a Goodix touch screen on the LPSS I2C (real PCs; quiet without one)
 void X64StartNetwork();				// xk_e1000.cpp: the e1000 NIC + Ethernet LDD (X4.47)
 #ifdef XK_USB_HOST
 void X64StartUsbHost();				// usbhost/xk_usbhost.cpp: the FreeBSD USB host on the xHCI controller (USB_HOST=1)
@@ -459,6 +460,7 @@ extern "C" TInt X64ExtensionEntry(TInt aReason)
 	X64StartMediaExtensions();
 	X64StartDisplay();
 	X64StartKeyboard();
+	X64StartI2cTouch();
 	X64StartNetwork();					// X4.47: the e1000 NIC + the Ethernet LDD
 #ifdef XK_USB_HOST
 	X64StartUsbHost();
