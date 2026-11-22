@@ -163,14 +163,15 @@ const TUint32 KInitStackSize	= 0x4000;	// 64-bit frames: 4x the IA-32 0x1000
 const TUint32 KHeapSizeMin		= 0x00100000;
 const TUint32 KHeapSizeMax		= 0x01000000;
 
-static TUint32 RamTopFromMultiboot(TUint32 aInfo, TUint32 aFrom)
+static TUint32 RamBankFromMultiboot(TUint32 aInfo, TUint32 aFrom, TUint32& aBase)
 	{
 	// multiboot2 info: u32 total_size, u32 reserved, then tags { u32 type, u32 size, ... } 8-aligned.
 	// tag 4 = basic meminfo { mem_lower KiB, mem_upper KiB (above 1 MiB) }.
 	// tag 6 = the memory map { u32 entry_size, u32 version, then { u64 base, u64 length, u32 type (1 = available), u32 } }.
-	// The bank is one run of RAM, so its top is the end of the available run that holds aFrom (the end of the ROM image and
-	// the root tables), adjacent available entries merged. With BIOS that is mem_upper's run from 1 MiB, unchanged. Under
-	// UEFI mem_upper ends at the first firmware hole (OVMF: ACPI NVS at 8 MiB, below the ROM's end), so the map decides.
+	// The bank is one run of RAM (adjacent available entries merged), at or above aFrom (the end of the ROM image and the
+	// root tables): the LARGEST such run below 4 GiB, clipped to start at aFrom. With BIOS that is mem_upper's run from
+	// 1 MiB, unchanged. Under UEFI the run holding aFrom can end at the next firmware hole (OVMF: ACPI NVS at 8 MiB; a GRUB
+	// chained from iPXE puts the ROM's end within a chunk of it), so the bank moves to the big run above the holes.
 	TUint32 total = *(TUint32*)aInfo;
 	TUint64 upper = 0;
 	TUint32* mmap = 0;
@@ -187,28 +188,46 @@ static TUint32 RamTopFromMultiboot(TUint32 aInfo, TUint32 aFrom)
 		}
 	if (!upper && !mmap)
 		Die("no multiboot2 meminfo tag");
-	TUint64 top = upper > aFrom ? upper : 0;
+	TUint64 bestBase = aFrom, bestTop = upper > aFrom ? upper : 0;
 	if (mmap && mmap[2] >= 24)
 		{
 		const TUint32 n = (mmap[1] - 16) / mmap[2];
-		TUint64 at = aFrom;
-		for (TBool grew = ETrue; grew; )
+		bestTop = 0;
+		for (TUint32 j = 0; j < n; ++j)
 			{
-			grew = EFalse;
-			for (TUint32 i = 0; i < n; ++i)
+			const TUint32* s = (const TUint32*)((TUint8*)mmap + 16 + j*mmap[2]);
+			TUint64 from = s[0] | ((TUint64)s[1] << 32);
+			const TUint64 send = from + (s[2] | ((TUint64)s[3] << 32));
+			if (s[4] != 1 || send <= aFrom || from >= 0x100000000ull)
+				continue;
+			if (from < aFrom)
+				from = aFrom;
+			TUint64 at = from;									// grow the run from here over adjacent available entries
+			for (TBool grew = ETrue; grew; )
 				{
-				const TUint32* e = (const TUint32*)((TUint8*)mmap + 16 + i*mmap[2]);
-				const TUint64 base = e[0] | ((TUint64)e[1] << 32), end = base + (e[2] | ((TUint64)e[3] << 32));
-				if (e[4] == 1 && base <= at && end > at && base < 0x100000000ull)
-					{ at = end < 0x100000000ull ? end : 0xFFFFF000ull; grew = ETrue; }
+				grew = EFalse;
+				for (TUint32 i = 0; i < n; ++i)
+					{
+					const TUint32* e = (const TUint32*)((TUint8*)mmap + 16 + i*mmap[2]);
+					const TUint64 base = e[0] | ((TUint64)e[1] << 32), end = base + (e[2] | ((TUint64)e[3] << 32));
+					if (e[4] == 1 && base <= at && end > at && base < 0x100000000ull)
+						{ at = end < 0x100000000ull ? end : 0xFFFFF000ull; grew = ETrue; }
+					}
 				}
+			if (at > 0x7FE00000ull)								// kmain's TInt RAM-size cap, applied before the choice
+				at = 0x7FE00000ull;
+			// whole chunks only: the bank's base rounds up, its top down
+			const TUint64 cb = (from + KChunkMask) & ~(TUint64)KChunkMask, ct = at & ~(TUint64)KChunkMask;
+			if (ct > cb && ct - cb > bestTop - (bestTop ? bestBase : 0))
+				{ bestBase = cb; bestTop = ct; }
 			}
-		if (at > top)
-			top = at;
 		}
-	if (top <= aFrom)
+	else
+		bestBase = (bestBase + KChunkMask) & ~(TUint64)KChunkMask;
+	if (bestTop <= bestBase)
 		Die("no RAM above the ROM image");
-	return (TUint32)top;
+	aBase = (TUint32)bestBase;
+	return (TUint32)bestTop;
 	}
 
 // The linear framebuffer GRUB set up for boot.S's multiboot2 framebuffer request (tag 8:
@@ -375,13 +394,14 @@ extern "C" void kmain(TUint32 aMultibootInfo)
 	// ---- RAM: one bank, from just above the ROM image + the per-CPU root tables to the top.
 	// (bootmain.asm "ROM is actually in RAM": the ROM area is excised from the RAM list.)
 	const TUint32 rootPhys = romPhys + romSize;	// 2 pages per CPU, NOT in the RAM bank
-	TUint32 ramTop = RamTopFromMultiboot(aMultibootInfo, rootPhys + KX64MaxCpus*2*KPageSize) & ~(TUint32)KChunkMask;
+	TUint32 bankBase;
+	TUint32 ramTop = RamBankFromMultiboot(aMultibootInfo, rootPhys + KX64MaxCpus*2*KPageSize, bankBase) & ~(TUint32)KChunkMask;
 	// iTotalRamSize (and much of the kernel's RAM arithmetic) is a TInt, TPhysAddr 32 bits: below 2 GiB.
 	// More needs the LP64 kernel (64-bit TPhysAddr) -- x86-64-port.md X4.34.
 	if (ramTop > 0x7FE00000u)
 		ramTop = 0x7FE00000u;
 	Zero(rootPhys, KX64MaxCpus*2*KPageSize);
-	BankBase = (rootPhys + KX64MaxCpus*2*KPageSize + KChunkMask) & ~(TUint32)KChunkMask;
+	BankBase = bankBase;
 	BankEnd = ramTop;
 	AllocNext = BankBase;
 	Trace("RAM bank base", BankBase); Trace("RAM bank end", BankEnd);
