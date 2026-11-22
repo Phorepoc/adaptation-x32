@@ -45,7 +45,11 @@ echo "== compile arch-neutral nkernsmp TUs =="
 for spec in $NEUTRAL; do
     f="${spec%%:*}"; dir="${spec##*:}"
     printf "  %-14s " "$f"
-    if $NCXX $DEFS $INCS $PRE -c "$EKA/$dir/$f" -o "$OUT/${f%.cpp}.o" 2>"$OUT/${f%.cpp}.log"; then
+    src="$EKA/$dir/$f"; TUINC=""
+    # core's fixed copy of nk_bal.cpp (toolchain/shims/nkernsmp_board: ReBalance's heavy-thread share clamped, the
+    # PinePhone boot-2992 scheduler fault); its quoted includes come from the mirror's nkernsmp/
+    [ "$f" = nk_bal.cpp ] && [ -f toolchain/shims/nkernsmp_board/nk_bal.cpp ] && { src=toolchain/shims/nkernsmp_board/nk_bal.cpp; TUINC="-I $EKA/nkernsmp"; }
+    if $NCXX $DEFS $INCS $TUINC $PRE -c "$src" -o "$OUT/${f%.cpp}.o" 2>"$OUT/${f%.cpp}.log"; then
         echo "OK"
     else
         echo "FAIL"; grep -E "error:" "$OUT/${f%.cpp}.log" | sed 's/^/      /' | head -8; exit 1
