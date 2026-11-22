@@ -2,16 +2,17 @@
 // SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 
 // xk_usbhost.cpp -- the PC board's side of phe_usb_port.h for the FreeBSD USB host (xk_usb_hc.c attaches the xHCI
-// driver, the ARM USB host's phe_usb_ekern.cpp runs the stack in a kernel DFC thread). It finds the xHCI controllers on
+// driver, pheusb's phe_usb_ekern.cpp runs the stack in a kernel DFC thread). It finds the xHCI controllers on
 // the PCI bus (class 0C0330, through the scan in xk_pci.h), turns on memory decode and bus mastering, sizes and maps
 // BAR0 uncached, and lists them for the stack as "xhci" controllers; the stack then takes them from the BIOS, resets
 // and starts them. The INTx line stays disabled at the device (command bit 10): the stack polls at 1 ms.
 // Built only with USB_HOST=1 (make_ekern.sh); called from the kernel's extension start (X64StartUsbHost).
 #include <kernel/kern_priv.h>
 #include <assp.h>
+#include <e32keys.h>
 #include "xk_pci.h"
 
-extern "C" {
+
 #include "phe_usb_port.h"
 }
 
@@ -105,20 +106,37 @@ extern "C" void ekseam_puts(const char* aStr)
 	NKern::RestoreInterrupts(irq);
 	}
 
-// no serial ports (phe_usb_tty.c) in this build: the service pass calls this weakly, and a weak call to 0 cannot be linked in long mode
-extern "C" void phe_usb_tty_service(void) {}
 
-TInt UsbCommInstall()						// the ARM USB host's phe_usb_comm.cpp (the serial ports as a Comm PDD): not on the PC
+TInt UsbCommInstall()						// pheusb ekern/phe_usb_ekern.cpp installs the serial ports as a Comm PDD through this: none on the PC
 	{
 	return KErrNone;
 	}
 
-TInt InitExtension_usbhost();				// the ARM USB host's phe_usb_ekern.cpp
+TInt InitExtension_usbhost();				// pheusb: ekern/phe_usb_ekern.cpp
+TInt UsbhostLddInstall();				// pheusb: ldd/usbhost_ldd.cpp (the USBHUBDRIVER and USBDI logical devices)
+
+// USB keyboards and pointers (pheusb ekern/phe_usb_hid_ekern.cpp): the board's keymap as on the i8042 (xk_keyboard.cpp):
+// F9 = a short press of the phone's power key, F10 = its Menu key
+typedef TInt (*TPheUsbKeyRemap)(TInt aStdKey);
+void PheUsbHidStart(TInt aWidth, TInt aHeight, TPheUsbKeyRemap aRemap);
+static TInt BoardKey(TInt aStd)
+	{
+	return aStd == EStdKeyF9 ? EStdKeyDevice2 : aStd == EStdKeyF10 ? EStdKeyApplication0 : aStd;
+	}
+#ifndef XK_SCREEN_W
+#define XK_SCREEN_W 360
+#define XK_SCREEN_H 640
+#endif
 
 void X64StartUsbHost()
 	{
+	PheUsbHidStart(XK_SCREEN_W, XK_SCREEN_H, &BoardKey);
 	NKern::ThreadEnterCS();
 	TInt r = InitExtension_usbhost();
+#ifndef XK_USB_NO_LDD
+	if (r == KErrNone)
+		r = UsbhostLddInstall();
+#endif
 	NKern::ThreadLeaveCS();
 	Kern::Printf("[usbh] InitExtension_usbhost -> %d", r);
 	}

@@ -243,22 +243,23 @@ $CXX -c "$EK/xk_minisec.cpp" -o "$OUT/xk_minisec.o"
 # the REAL exstart extension (unmodified baseline TU), statically linked: only its entry point is renamed
 $CXX $DEFS $INCS $PRE -DKernelModuleEntry=X64ExstartEntry -DInitExtension=X64ExstartInit \
      -c "$EKA/kernel/exstart.cpp" -o "$OUT/exstart.o"
-# USB_HOST=1 (usb-host-plan.md, PC P1): the FreeBSD USB host. The stack (core + kshim, unmodified) and the ARM USB host's seam
-# files (phe_usb_port.h, phe_usb_ekern.cpp, phe_usb_libc.c) come from that repository's tree merged into the OS tree
-# (USBHOST_A64 = its src/phorepoc-arm/a64/usbhost, FB = its third_party/freebsd-usb); the xHCI driver is third_party/freebsd-usb-xhci.
+# USB_HOST=1 (usb-host-plan.md, PC P1): the FreeBSD USB host from the pheusb layer merged into the OS tree (its src/usbhost =
+# PHEUSB_UH, its third_party/freebsd-usb = FB): the stack (core + kshim, unmodified) with the xHCI driver, the kernel seam
+# (phe_usb_ekern.cpp) and the HID client (phe_usb_hid_ekern.cpp: USB keyboards, mice, tablets, gamepads). No USB LDDs here.
 if [ "${USB_HOST:-0}" = 1 ]; then
-  A64USB="${USBHOST_A64:-src/phorepoc-arm/a64/usbhost}"; FBSD="${FB:-third_party/freebsd-usb}"
-  [ -f "$A64USB/ekern/phe_usb_ekern.cpp" ] && [ -d "$FBSD/stand/kshim" ] \
-    || { echo "USB_HOST=1 needs the ARM USB host's $A64USB and $FBSD in the OS tree (merge that repository in)"; exit 1; }
-  FB="$FBSD" A64USB="$A64USB" bash "$USBH/build_bsd_x32.sh" "$OUT/usbhost" > "$OUT/usbhost.log" 2>&1 || { tail -20 "$OUT/usbhost.log"; exit 1; }
-  UCXX="-I $A64USB -I $USBH/kinc -I $EK"
+  UH="${PHEUSB_UH:-src/usbhost}"; FBSD="${FB:-third_party/freebsd-usb}"
+  [ -f "$UH/ekern/phe_usb_ekern.cpp" ] && [ -f "$UH/build_bsd.sh" ] && [ -d "$FBSD/stand/kshim" ] \
+    || { echo "USB_HOST=1 needs the pheusb layer ($UH, $FBSD) in the OS tree (the board's REPOS)"; exit 1; }
+  ARCH=x32 HC=xhci FB="$FBSD" bash "$UH/build_bsd.sh" "$OUT/usbhost" > "$OUT/usbhost.log" 2>&1 || { tail -20 "$OUT/usbhost.log"; exit 1; }
+  UCXX="-I $UH -I $EK -DXK_USB_NO_LDD $SCREENDEF"
   $CXX $DEFS $INCS $MED $UCXX $PRE -c "$USBH/xk_usbhost.cpp" -o "$OUT/xk_usbhost.o"
-  $CXX $DEFS $INCS $MED $UCXX $PRE -c "$A64USB/ekern/phe_usb_ekern.cpp" -o "$OUT/phe_usb_ekern.o"
+  $CXX $DEFS $INCS $MED $UCXX $PRE -c "$UH/ekern/phe_usb_ekern.cpp" -o "$OUT/phe_usb_ekern.o"
+  $CXX $DEFS $INCS $MED $UCXX $PRE -c "$UH/ekern/phe_usb_hid_ekern.cpp" -o "$OUT/phe_usb_hid_ekern.o"
 fi
 mv "$OSTAMP.new" "$OSTAMP"
 fi
 
-USBOBJS=""; [ "${USB_HOST:-0}" = 1 ] && USBOBJS="$OUT/usbhost/usbhost_bsd.o $OUT/xk_usbhost.o $OUT/phe_usb_ekern.o"
+USBOBJS=""; [ "${USB_HOST:-0}" = 1 ] && USBOBJS="$OUT/usbhost/usbhost_bsd.o $OUT/xk_usbhost.o $OUT/phe_usb_ekern.o $OUT/phe_usb_hid_ekern.o"
 LSTAMP=$OUT/image.stamp
 LKEY="$OKEY|${SECONDARY:-uexe}"
 if [ "${KCLEAN:-0}" != 1 ] && [ -f "$LSTAMP" ] && [ "$(cat "$LSTAMP")" = "$LKEY" ] && [ -f "$OUT/phorepoc-ekern.iso" ]    && [ ! "$KSTAMP" -nt "$LSTAMP" ] && [ ! "$OSTAMP" -nt "$LSTAMP" ] && [ ! "$OUT/xk_uimage.o" -nt "$LSTAMP" ]    && [ "${SECONDARY:-uexe}" != uexe ]; then
