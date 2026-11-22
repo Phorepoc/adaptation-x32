@@ -54,6 +54,13 @@ static inline void OutsW(TUint16 aPort, const TAny* aBuf, TInt aWords)
 static inline void Delay400ns()
 	{ for (TInt i=0; i<4; ++i) (void)Inb(KAtaCtrl); }
 
+// the AHCI back end (xk_ahci.cpp), weak: a board that does not link it keeps IDE only. Unit 0 goes over AHCI when the
+// IDE probe finds no master and an AHCI controller has a SATA disk (real PCs; QEMU -device ahci).
+TUint32 XkAhciProbe() __attribute__((weak));
+TInt XkAhciTransfer(TBool aWrite, TUint32 aLba, TInt aCount, TUint8* aBuf) __attribute__((weak));
+TInt XkAhciFlush() __attribute__((weak));
+static TBool UseAhci;
+
 static TInt CardMediaId = -1;		// the ELOCD media id (not the TMediaDevice) of the card, set when it registers
 
 class DPhysicalDeviceMediaAta : public DPhysicalDevice
@@ -179,6 +186,8 @@ TInt DMediaDriverAta::DoCreate()
 // aCount sectors (1..KBufSectors) at aLba, into/out of aBuf. Called with AtaLock held.
 TInt DMediaDriverAta::Command(TUint8 aCmd, TUint32 aLba, TInt aCount, TUint8* aBuf)
 	{
+	if (UseAhci && iUnit == 0)
+		return XkAhciTransfer(aCmd == KCmdWriteSectors, aLba, aCount, aBuf);
 	TInt r = WaitReady(EFalse);
 	if (r != KErrNone)
 		return r;
@@ -199,6 +208,8 @@ TInt DMediaDriverAta::Command(TUint8 aCmd, TUint32 aLba, TInt aCount, TUint8* aB
 
 TInt DMediaDriverAta::Flush()
 	{
+	if (UseAhci && iUnit == 0)
+		return XkAhciFlush();
 	Outb(KAtaDrive, iUnit ? 0xF0 : 0xE0);
 	Delay400ns();
 	Outb(KAtaCmd, KCmdFlushCache);
@@ -395,6 +406,8 @@ TUint32 X64ProbeAtaDisk()
 	{
 	if (!AtaSectorsU[0])
 		AtaSectorsU[0] = Identify(0);
+	if (!AtaSectorsU[0] && XkAhciProbe && (AtaSectorsU[0] = XkAhciProbe()) != 0)
+		UseAhci = ETrue;
 	return AtaSectorsU[0];
 	}
 
@@ -402,7 +415,7 @@ TUint32 X64ProbeAtaDisk()
 TUint32 X64ProbeAtaCard()
 	{
 	X64ProbeAtaDisk();
-	if (!AtaSectorsU[1])
+	if (!AtaSectorsU[1] && !UseAhci)
 		AtaSectorsU[1] = Identify(1);
 	return AtaSectorsU[1];
 	}
@@ -426,8 +439,8 @@ static void StartUnit(TInt aUnit, TInt aDevice, TInt aCount, TInt* aDrives, cons
 		r = KErrNoMemory;
 	if (aUnit && pM && r == KErrNone)
 		CardMediaId = pM->iMediaId;
-	Kern::Printf("[ata] %s: %d sectors (%d MB), PIO; local drives %d.. -> %d",
-					aWhat, AtaSectorsU[aUnit], AtaSectorsU[aUnit] >> 11, aDrives[0], r);
+	Kern::Printf("[ata] %s: %d sectors (%d MB), %s; local drives %d.. -> %d",
+					aWhat, AtaSectorsU[aUnit], AtaSectorsU[aUnit] >> 11, (UseAhci && !aUnit) ? "AHCI" : "PIO", aDrives[0], r);
 	}
 
 // From xk_media.cpp after ELOCD: with a disk present install the PDD + register it on local drives
