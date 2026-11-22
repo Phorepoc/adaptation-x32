@@ -73,8 +73,82 @@ static void PutHex(TUint32 v)
 	{ for (TInt i=28; i>=0; i-=4) PutC("0123456789abcdef"[(v>>i)&15]); }
 static void Trace(const char* aWhat, TUint32 aVal)
 	{ Put("  [xboot] "); Put(aWhat); Put(" = "); PutHex(aVal); Put("\n"); }
+#ifndef XK_BANDS
+#define XK_BANDS 0
+#endif
+// BANDS=1 (the GPD Win 2 rig, no serial port): boot progress as colour stripes on the GOP framebuffer, stripe n of 16 from
+// the top -- a photo of the screen says how far a boot got. Only a 32-bpp framebuffer below 4 GiB (the identity map).
+static TUint32 BandFb, BandPitch, BandW, BandH;
+static void Band(TUint aN, TUint32 aRgb)
+	{
+	if (!XK_BANDS || !BandFb)
+		return;
+	for (TUint32 y = aN * BandH / 16; y + 2 < (aN + 1) * BandH / 16; ++y)
+		for (TUint32 x = 0; x < BandW; ++x)
+			*(volatile TUint32*)(BandFb + y * BandPitch + x * 4) = aRgb;
+	}
+static void BandInit(TUint32 aInfo)
+	{
+	TUint32 total = *(TUint32*)aInfo;
+	for (TUint32 off=8; off<total; )
+		{
+		TUint32* tag = (TUint32*)(aInfo+off);
+		if (tag[0]==0)
+			break;
+		if (tag[0]==8 && tag[3]==0 && ((const TUint8*)(tag+7))[0]==32)
+			{ BandFb = tag[2]; BandPitch = tag[4]; BandW = tag[5]; BandH = tag[6]; }
+		off += (tag[1]+7)&~7u;
+		}
+	}
+// TCO=1 (the GPD Win 2 rig): the chipset watchdog armed as the very first thing, with a long first timeout (~60 s), so a
+// boot that dies anywhere before the kernel's own watchdog driver (xk_tco.cpp, which re-arms it at TCO_SECS and kicks it)
+// still resets. The same registers as xk_tco.cpp; MMIO through the bootstrap's identity map of the low 4 GiB.
+#ifndef XK_TCO
+#define XK_TCO 0
+#endif
+static inline void outw(TUint16 aPort, TUint16 aVal) { __asm__ __volatile__("out dx, ax" : : "d"(aPort), "a"(aVal)); }
+static inline TUint16 inw(TUint16 aPort) { TUint16 v; __asm__ __volatile__("in ax, dx" : "=a"(v) : "d"(aPort)); return v; }
+static inline void outl(TUint16 aPort, TUint32 aVal) { __asm__ __volatile__("out dx, eax" : : "d"(aPort), "a"(aVal)); }
+static inline TUint32 inl(TUint16 aPort) { TUint32 v; __asm__ __volatile__("in eax, dx" : "=a"(v) : "d"(aPort)); return v; }
+static TUint32 PciRd(TUint aDev, TUint aFn, TUint aReg) { outl(0xCF8, 0x80000000u | aDev << 11 | aFn << 8 | (aReg & 0xFC)); return inl(0xCFC); }
+static void PciWr(TUint aDev, TUint aFn, TUint aReg, TUint32 aV) { outl(0xCF8, 0x80000000u | aDev << 11 | aFn << 8 | (aReg & 0xFC)); outl(0xCFC, aV); }
+static TUint16 EarlyTcoBase;
+static void EarlyTco()
+	{
+	if (!XK_TCO)
+		return;
+	TUint16 tco = 0;
+	if (PciRd(31, 0, 0) == 0x29188086)						// ICH9 (QEMU q35)
+		{
+		tco = (TUint16)((PciRd(31, 0, 0x40) & 0xFF80u) + 0x60);
+		const TUint32 rcba = PciRd(31, 0, 0xF0);
+		if (rcba & 1)
+			{ volatile TUint32* gcs = (volatile TUint32*)(TLinAddr)((rcba & ~0x3FFFu) + 0x3410); *gcs &= ~(1u << 5); }
+		}
+	else if ((PciRd(31, 4, 0) & 0xFFFF) == 0x8086 && (PciRd(31, 4, 8) >> 8) == 0x0C0500 && (PciRd(31, 4, 0x54) & 0x100))
+		{
+		tco = (TUint16)(PciRd(31, 4, 0x50) & 0xFFE0u);		// Sunrise Point: SMBus TCOBASE; NO_REBOOT via the P2SB
+		const TUint32 e0 = PciRd(31, 1, 0xE0);
+		PciWr(31, 1, 0xE0, e0 & ~0x100u);
+		const TUint32 bar = PciRd(31, 1, 0x10) & ~0xFu;
+		PciWr(31, 1, 0xE0, e0);
+		if (bar)
+			{ volatile TUint32* c = (volatile TUint32*)(TLinAddr)(bar + (0xC6u << 16) + 0x0C); *c &= ~1u; }
+		}
+	if (!tco)
+		{ Put("  [xboot] TCO: none\n"); return; }
+	const TUint16 cnt = inw(tco + 0x08);
+	outw(tco + 0x08, cnt | (1u << 11));						// halt, 50 ticks (30 s) twice, clear status, reload, run
+	outw(tco + 0x12, (TUint16)((inw(tco + 0x12) & ~0x3FFu) | 50));
+	outw(tco + 0x04, 1u << 3); outw(tco + 0x06, 1u << 1);
+	outw(tco + 0x00, 1);
+	outw(tco + 0x08, cnt & ~(1u << 11));
+	EarlyTcoBase = tco;
+	Trace("TCO armed early (~60 s), TCOBASE", tco);
+	}
+
 static void Die(const char* aWhy)
-	{ Put("  [xboot] FATAL: "); Put(aWhy); Put("\n"); for(;;) { __asm__ __volatile__("cli; hlt"); } }
+	{ Put("  [xboot] FATAL: "); Put(aWhy); Put("\n"); Band(15, 0xFF00FF); for(;;) { __asm__ __volatile__("cli; hlt"); } }
 
 static void Zero(TUint32 aPhys, TUint32 aSize)
 	{ volatile TUint8* p=(volatile TUint8*)aPhys; while (aSize--) *p++=0; }
@@ -384,6 +458,9 @@ extern "C" void kmain(TUint32 aMultibootInfo)
 	{
 	outb(0x3F9,0); outb(0x3FB,0x80); outb(0x3F8,1); outb(0x3F9,0); outb(0x3FB,3); outb(0x3FA,0xC7);
 	Put("\n[xboot] Phorepoc amd64/x32 bootstrap -- EKA2 flexible memory model, long-mode tables\n");
+	EarlyTco();											// TCO=1: a reset in ~60 s unless the kernel takes over
+	BandInit(aMultibootInfo);
+	Band(0, 0xFF0000);									// 0 red: the bootstrap runs
 
 	const TUint32 romLin	= SYMVAL(__rom_lin);
 	const TUint32 romPhys	= SYMVAL(__rom_phys);
@@ -405,6 +482,7 @@ extern "C" void kmain(TUint32 aMultibootInfo)
 	BankEnd = ramTop;
 	AllocNext = BankBase;
 	Trace("RAM bank base", BankBase); Trace("RAM bank end", BankEnd);
+	Band(1, 0xFFFF00);									// 1 yellow: a RAM bank
 
 	// ---- InitMemMapSystem: page directory, PT0 self-mapping the page-table window, PD mapped.
 	KernPd = (TEntry*)AllocPages(KPageDirectorySize>>KPageShift);
@@ -709,6 +787,7 @@ extern "C" void kmain(TUint32 aMultibootInfo)
 	Trace("page tables used", PtCount); Trace("RAM used by boot", AllocNext-BankBase);
 	Trace("kernel entry", k.iEntryPoint); Trace("super page phys", superPhys);
 	Put("[xboot] switching to the kernel address space, calling _E32Startup(ROM header, super page)\n");
+	Band(2, 0x00FF00);									// 2 green: into the kernel
 
 	// CR4.PGE on (global pages) before the kernel asks for them; then CR3, stack, call.
 	__asm__ __volatile__(

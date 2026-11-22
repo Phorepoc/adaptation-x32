@@ -45,7 +45,12 @@ static TInt TheKicks;
 
 static void KickDfc(TAny*)
 	{
-	if (XK_TCO_TEST && ++TheKicks == XK_TCO_TEST)
+	++TheKicks;
+#ifdef XK_CRASH_TEST
+	if (TheKicks + 1 == XK_CRASH_TEST)
+		Kern::Fault("RIGTEST", 1);							// CRASH_TEST=<s>: the fault -> disk log -> reset path
+#endif
+	if (XK_TCO_TEST && TheKicks == XK_TCO_TEST)
 		{
 		Kern::Printf("[tco] test: kicks stop now, the reset is due in ~%d s", XK_TCO_SECS);
 		TheStop = ETrue;

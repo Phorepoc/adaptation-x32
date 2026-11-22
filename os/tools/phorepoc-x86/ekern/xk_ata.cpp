@@ -467,3 +467,20 @@ void X64StartAtaCard()
 		}
 	StartUnit(1, MEDIA_DEVICE_CARD, CARD_DRIVECOUNT, CardDriveNumbers, "primary slave = memory card");
 	}
+
+// The rig's disk log (xk_disklog.cpp): raw sectors on the AHCI disk, under the driver's lock once it exists (the media
+// driver creates it; before that nothing else uses the disk). aCount 1..128. aLocked = EFalse from a crash (no waits).
+TInt X64DiskRaw(TBool aWrite, TUint32 aLba, TInt aCount, TUint8* aBuf, TBool aLocked)
+	{
+	if (!XkAhciProbe || !XkAhciProbe())
+		return KErrNotReady;
+	const TBool lock = aLocked && AtaLock;
+	if (lock)
+		{ NKern::ThreadEnterCS(); Kern::MutexWait(*AtaLock); }
+	TInt r = XkAhciTransfer(aWrite, aLba, aCount, aBuf);
+	if (r == KErrNone && aWrite)
+		r = XkAhciFlush();
+	if (lock)
+		{ Kern::MutexSignal(*AtaLock); NKern::ThreadLeaveCS(); }
+	return r;
+	}

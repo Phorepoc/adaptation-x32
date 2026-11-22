@@ -50,8 +50,8 @@ grep -q "0 FAIL" "$OUT/census.log" || { grep -E "FAIL" "$OUT/census.log" | head;
 grep -q "^  FAIL " "$OUT/census.log" && { grep -A3 "^  FAIL " "$OUT/census.log" | head -12; exit 1; }
 mv "$KSTAMP.new" "$KSTAMP"
 fi
-# the only symbols the kernel objects may still want are the ones xk_entry.cpp (and xk_threaddump.cpp: X64_CrashWho) supply; xk_irq.cpp: PushExcInfoOnUserStack
-if grep -v -x -e "DebugOutputChar(unsigned int)" -e "KPrintf(char const\*, ...)" -e __code_base -e __utext_base -e X64_CrashWho -e "PushExcInfoOnUserStack(TX86ExcInfo\*, int)" $KOUT/ekern-census-flexible/undefined.txt | grep -q .; then
+# the only symbols the kernel objects may still want are the ones xk_entry.cpp (and xk_threaddump.cpp: X64_CrashWho, X64_CrashEnd) supply; xk_irq.cpp: PushExcInfoOnUserStack
+if grep -v -x -e "DebugOutputChar(unsigned int)" -e "KPrintf(char const\*, ...)" -e __code_base -e __utext_base -e X64_CrashWho -e X64_CrashEnd -e "PushExcInfoOnUserStack(TX86ExcInfo\*, int)" $KOUT/ekern-census-flexible/undefined.txt | grep -q .; then
   echo "unexpected undefined symbols:"; head -20 $KOUT/ekern-census-flexible/undefined.txt; exit 1
 fi
 KOBJ=$KOUT/ekern-census-flexible/obj
@@ -72,7 +72,14 @@ USBDEF=""; USBH=$SRC/usbhost; [ "${USB_HOST:-0}" = 1 ] && USBDEF="-DXK_USB_HOST=
 # adapter (usbhost/xk_netlog.cpp on pheusb's RTL8152/8153 driver; needs USB_HOST=1; NETLOG_TOKEN=<u32> = the command
 # token, 0 = any); TCO=1 = the chipset watchdog (xk_tco.cpp; TCO_SECS = the reset time, default 30)
 [ "${NETLOG:-0}" = 1 ] && [ "${USB_HOST:-0}" = 1 ] && USBDEF="$USBDEF -DXK_NETLOG=1 -DNETLOG_TOKEN=${NETLOG_TOKEN:-0}u"
-[ "${TCO:-0}" = 1 ] && USBDEF="$USBDEF -DXK_TCO=1 -DXK_TCO_SECS=${TCO_SECS:-30} -DXK_TCO_TEST=${TCO_TEST:-0}"
+# DISKLOG=1: the log ring to the SSD's phorepoc-log partition every second (xk_disklog.cpp; the rig's power-off-proof log)
+[ "${DISKLOG:-0}" = 1 ] && USBDEF="$USBDEF -DXK_DISKLOG=1"
+{ [ "${DISKLOG:-0}" = 1 ] || { [ "${NETLOG:-0}" = 1 ] && [ "${USB_HOST:-0}" = 1 ]; }; } && USBDEF="$USBDEF -DXK_LOGRING=1"
+# FAULTRESET=1: every kernel crash ends in a reset after the report (xk_threaddump.cpp X64_CrashEnd; the rig)
+[ "${FAULTRESET:-0}" = 1 ] && USBDEF="$USBDEF -DXK_FAULT_RESET=1"
+# BANDS=1: boot progress stripes on the GOP framebuffer (xboot.cpp; no serial port on the GPD)
+[ "${BANDS:-0}" = 1 ] && USBDEF="$USBDEF -DXK_BANDS=1"
+[ "${TCO:-0}" = 1 ] && USBDEF="$USBDEF -DXK_TCO=1 -DXK_TCO_SECS=${TCO_SECS:-30} -DXK_TCO_TEST=${TCO_TEST:-0}${CRASH_TEST:+ -DXK_CRASH_TEST=$CRASH_TEST}"
 SCREENDEF=""; [ -n "${SCREEN:-}" ] && SCREENDEF="-DXK_SCREEN_W=${SCREEN%x*} -DXK_SCREEN_H=${SCREEN#*x}"
 # SCALE=n (X4.35): the display shows each screen pixel as an n x n block (pixel doubling: a phone screen
 # is tiny on a desktop monitor) and GRUB is asked for a framebuffer of SCREEN x n. Default 2 with SCREEN=;
@@ -100,7 +107,7 @@ PRE="-include toolchain/x32/port_prelude.h -include e32def.h"
 # a run that changes none of them (every app-debug iteration: only the ROM changes) reuses them. The ROM image
 # object (xk_uimage.o) is rebuilt when romsect.bin is newer; link + ISO are skipped when nothing changed at all.
 OSTAMP=$OUT/image-objs.stamp
-OKEY="$DEFS|usb${USB_HOST:-0}|i915${I915:-0}|nl${NETLOG:-0}.${NETLOG_TOKEN:-0}|tco${TCO:-0}.${TCO_SECS:-30}.${TCO_TEST:-0}|$FBDEF|$KKEY|snd${SOUND_TEST:-}|hda${HDADUMP:-}${HDAIMM:-}|ramc${RAMC_DISK:-1}.${RAMC_MB:-128}"
+OKEY="$DEFS|usb${USB_HOST:-0}|i915${I915:-0}|nl${NETLOG:-0}.${NETLOG_TOKEN:-0}|dl${DISKLOG:-0}|bands${BANDS:-0}|fr${FAULTRESET:-0}.${CRASH_TEST:-}|tco${TCO:-0}.${TCO_SECS:-30}.${TCO_TEST:-0}|$FBDEF|$KKEY|snd${SOUND_TEST:-}|hda${HDADUMP:-}${HDAIMM:-}|ramc${RAMC_DISK:-1}.${RAMC_MB:-128}"
 OBJS_OK=0
 if [ "${KCLEAN:-0}" != 1 ] && [ -f "$OSTAMP" ] && [ "$(cat "$OSTAMP")" = "$OKEY" ]    && [ -z "$(find -L "$PORT" "$EK" "$USBH" "$SRC/boot.S" "$SRC/grub.cfg" "$KINC" -newer "$OSTAMP" -type f 2>/dev/null | head -1)" ]; then
   echo "[3/5] boot stub + port objects: unchanged -- reused"; OBJS_OK=1
@@ -246,6 +253,8 @@ $CXX $DEFS $INCS $PRE -c "$EK/xk_sgresource.cpp" -o "$OUT/xk_sgresource.o"
 # X4.27 debug aid: DUMP=<s> dumps every thread (state + symbolizable user stack) once, s seconds in
 $CXX $DEFS $INCS $PRE -fno-access-control -c "$EK/xk_threaddump.cpp" -o "$OUT/xk_threaddump.o"
 I915OBJS=""; if [ "${I915:-0}" = 1 ]; then $CXX $DEFS $INCS $PRE -c "$EK/xk_i915.cpp" -o "$OUT/xk_i915.o"; I915OBJS="$OUT/xk_i915.o"; fi
+case "$USBDEF" in *XK_LOGRING*) $CXX $DEFS $INCS $PRE -c "$EK/xk_logring.cpp" -o "$OUT/xk_logring.o"; I915OBJS="$I915OBJS $OUT/xk_logring.o" ;; esac
+if [ "${DISKLOG:-0}" = 1 ]; then $CXX $DEFS $INCS $PRE -c "$EK/xk_disklog.cpp" -o "$OUT/xk_disklog.o"; I915OBJS="$I915OBJS $OUT/xk_disklog.o"; fi
 if [ "${TCO:-0}" = 1 ]; then $CXX $DEFS $INCS $PRE -c "$EK/xk_tco.cpp" -o "$OUT/xk_tco.o"; I915OBJS="$I915OBJS $OUT/xk_tco.o"; fi
 # the first user program: no kernel headers, no kernel symbols
 $CXX -c "$EK/xk_minisec.cpp" -o "$OUT/xk_minisec.o"

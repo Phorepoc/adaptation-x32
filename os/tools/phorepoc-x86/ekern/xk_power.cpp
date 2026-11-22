@@ -47,12 +47,18 @@ public:
 	void PowerDown(TTimeK aWakeupTime);
 	};
 
+#ifdef XK_DISKLOG
+void X64DiskLogFinalFlush();					// xk_disklog.cpp
+#endif
 void DX64PowerController::PowerDown(TTimeK /*aWakeupTime*/)
 	{
 	if (iTargetState == EPwStandby)
 		return;										// the wakeup event already happened
 	const TBool off = (iTargetState == EPwOff);
 	Kern::Printf("[power] %s", off ? "switch off (ACPI S5)" : "restart");
+#ifdef XK_DISKLOG
+	X64DiskLogFinalFlush();						// the rig: the last lines to the disk log before the power goes
+#endif
 	if (off)
 		{
 		const TUint32 a = (TUint32)Kern::SuperPage().iReserved[KX64SuperPm1a];

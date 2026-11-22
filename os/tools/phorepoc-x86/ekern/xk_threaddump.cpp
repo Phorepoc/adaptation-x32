@@ -131,7 +131,40 @@ void X64ArmThreadDump()
 // interrupts off; KPrintf is the lock-free COM1 writer, the user stack is the CURRENT thread's
 // (USafeRead is exception-safe). Bounded.
 void KPrintf(const char* aFmt, ...);
+#ifdef XK_DISKLOG
+void X64DiskLogCrashFlush();					// xk_disklog.cpp: the log to the disk once more, polled
+#endif
+static void CrashWho(NThreadBase* aN);
 extern "C" void X64_CrashWho(NThreadBase* aN)
+	{
+	CrashWho(aN);
+	}
+
+// the end of every crash (NKern::NotifyCrash, after the report): the rig's disk log once more, then -- FAULTRESET=1, the
+// GPD rig, nobody at the machine -- a reset at once: the chipset's reset control (CF9: hard, then full), the i8042's
+// reset line, and a triple fault as the last resort. Without FAULTRESET the CPU halts as before.
+#ifndef XK_FAULT_RESET
+#define XK_FAULT_RESET 0
+#endif
+static inline void CrashOutb(TUint16 aPort, TUint8 aVal) { __asm__ __volatile__("out dx, al" : : "d"(aPort), "a"(aVal)); }
+extern "C" void X64_CrashEnd()
+	{
+#ifdef XK_DISKLOG
+	X64DiskLogCrashFlush();
+#endif
+	if (!XK_FAULT_RESET)
+		return;
+	KPrintf("CRASH: resetting (FAULTRESET=1)");
+	CrashOutb(0xCF9, 0x02); CrashOutb(0xCF9, 0x06);				// hard reset
+	for (volatile TInt i = 0; i < 10000000; ++i) {}
+	CrashOutb(0xCF9, 0x02); CrashOutb(0xCF9, 0x0E);				// full reset (power cycle)
+	for (volatile TInt i = 0; i < 10000000; ++i) {}
+	CrashOutb(0x64, 0xFE);											// the i8042's reset line
+	for (volatile TInt i = 0; i < 10000000; ++i) {}
+	struct { TUint16 iLimit; TUint64 iBase; } __attribute__((packed)) idt = { 0, 0 };
+	__asm__ __volatile__("lidt %0; int3" : : "m"(idt));			// triple fault
+	}
+static void CrashWho(NThreadBase* aN)
 	{
 	if (!aN)
 		return;

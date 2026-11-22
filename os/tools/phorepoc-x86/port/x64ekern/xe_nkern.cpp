@@ -71,6 +71,7 @@ EXPORT_C TBool NKern::KernelLocked(TInt aCount)
 extern "C" char __code_base[], __utext_base[];		// ekern.lds: the kernel's .text
 void KPrintf(const char* aFmt, ...);						// xk_entry.cpp
 extern "C" void X64_CrashWho(NThreadBase* aN);				// ekern/xk_threaddump.cpp
+extern "C" void X64_CrashEnd();								// ekern/xk_threaddump.cpp: the rig's log flush + reset
 void NKern::NotifyCrash(const TAny* /*a0*/, TInt /*a1*/)
 	{
 	// Kern::Fault has already printed the category + reason. (Calling NKFault here would
@@ -92,6 +93,7 @@ void NKern::NotifyCrash(const TAny* /*a0*/, TInt /*a1*/)
 		if (w >= (TUint32)(TLinAddr)__code_base && w < (TUint32)(TLinAddr)__utext_base)
 			KPrintf("  [sp+%03x] %08x", i*4, w), ++shown;
 		}
+	X64_CrashEnd();
 	for (;;) { __asm__ __volatile__("cli; hlt"); }
 	}
 

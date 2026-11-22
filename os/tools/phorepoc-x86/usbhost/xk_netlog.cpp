@@ -5,12 +5,12 @@
 // log as UDP broadcasts and a small command channel (reboot, thread dump, screenshot, input, a hang for the watchdog
 // test). The wire format is xk_netlog_proto.h. Built with NETLOG=1 (make_ekern.sh; needs USB_HOST=1).
 //
-// Every byte DebugOutputChar sends to COM1 also lands in a 256 KB ring (X64NetLogChar, lock-free: a byte is reserved with
-// an atomic add and stored non-zero; the sender takes bytes up to the first zero), so the boot log from the first line
-// on goes out once the adapter has a link. The sender runs on the USB thread, in the adapter's per-pass poll.
+// It sends what the kernel's log ring holds (ekern/xk_logring.cpp: every DebugOutputChar byte from the first line on),
+// so the boot log goes out once the adapter has a link. The sender runs on the USB thread, in the adapter's per-pass poll.
 #include <kernel/kernel.h>
 #include <e32keys.h>
 #include "xk_netlog_proto.h"
+#include "xk_logring.h"
 extern "C" {
 #include "phe_usb_ure.h"
 }
@@ -25,19 +25,7 @@ void X64ScreenInfo(TLinAddr& aAddr, TInt& aW, TInt& aH, TInt& aPitch);	// xk_dis
 #define NETLOG_TOKEN 0
 #endif
 
-const TUint32 KRing = 256 * 1024;
-static volatile TUint8 gRing[KRing];
-static volatile TUint32 gHead;								// bytes reserved so far (wraps)
 static TUint32 gTail;										// bytes sent (the USB thread's)
-
-void X64NetLogChar(TUint aChar)
-	{
-	const TUint8 c = (TUint8)aChar;
-	if (!c)
-		return;
-	const TUint32 at = __atomic_fetch_add(&gHead, 1, __ATOMIC_RELAXED);
-	__atomic_store_n(&gRing[at % KRing], c, __ATOMIC_RELEASE);
-	}
 
 static TUint8 gMac[6], gIp[4];
 static const TUint8 KBcastMac[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
@@ -184,18 +172,14 @@ static void ShotPacket()
 
 static TBool LogPacket()
 	{
-	TUint32 head = __atomic_load_n(&gHead, __ATOMIC_ACQUIRE);
-	if (head - gTail > KRing)								// overrun: skip to what is still there
-		gTail = head - KRing;
+	const TUint32 head = X64LogCommitted();
+	if (head - gTail > KLogRing)							// overrun: skip to what is still there
+		gTail = head - KLogRing;
 	TUint8* p = gFrame + KHdr;
 	TUint32 n = 0;
 	while (n < 1472 - 12 && gTail != head)
 		{
-		const TUint8 c = __atomic_load_n(&gRing[gTail % KRing], __ATOMIC_ACQUIRE);
-		if (!c)
-			break;											// reserved, not stored yet
-		gRing[gTail % KRing] = 0;
-		p[12 + n++] = c;
+		p[12 + n++] = X64LogAt(gTail);
 		++gTail;
 		}
 	if (!n)
@@ -255,9 +239,7 @@ static const phe_usb_net_sink KSink = { &OnState, &OnRx, &OnPoll, 0 };
 
 void X64StartNetLog()
 	{
-	TUint32 lo, hi;
-	__asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
-	gBoot = lo ^ (hi << 16) ^ 0x50484C31u;
+	gBoot = X64LogBootId();
 	phe_usb_ure_set_sink(&KSink);
 	Kern::Printf("[netlog] waiting for a USB Ethernet adapter (RTL8152/8153), boot id %08x", gBoot);
 	}
