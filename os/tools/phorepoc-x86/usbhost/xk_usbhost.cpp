@@ -1,8 +1,8 @@
 // Copyright The Phorepoc Authors
 // SPDX-License-Identifier: EPL-2.0 OR GPL-2.0-or-later
 
-// xk_usbhost.cpp -- the PC board's side of phe_usb_port.h for the FreeBSD USB host (xk_usb_hc.c attaches the xHCI
-// driver, pheusb's phe_usb_ekern.cpp runs the stack in a kernel DFC thread). It finds the xHCI controllers on
+// xk_usbhost.cpp -- the PC board's side of phe_usb_port.h for the FreeBSD USB host (pheusb's phe_usb_hc.c attaches the
+// xHCI driver, its phe_usb_ekern.cpp runs the stack in a kernel DFC thread). It finds the xHCI controllers on
 // the PCI bus (class 0C0330, through the scan in xk_pci.h), turns on memory decode and bus mastering, sizes and maps
 // BAR0 uncached, and lists them for the stack as "xhci" controllers; the stack then takes them from the BIOS, resets
 // and starts them. The INTx line stays disabled at the device (command bit 10): the stack polls at 1 ms.
@@ -12,7 +12,7 @@
 #include <e32keys.h>
 #include "xk_pci.h"
 
-
+extern "C" {
 #include "phe_usb_port.h"
 }
 
