@@ -282,6 +282,8 @@ void DPcI8042::EventDfc(TAny* aPtr)
 		}
 	}
 
+void X64RequestThreadDump();			// xk_threaddump.cpp
+
 void DPcI8042::KeyByte(TUint8 b)
 	{
 	if (b == 0xE0)
@@ -300,6 +302,13 @@ void DPcI8042::KeyByte(TUint8 b)
 	iExtended = EFalse;
 	if (!iOn)
 		return;
+	// Scroll Lock: a thread dump on the debug serial (xk_threaddump.cpp; first_boot.py presses it when a boot hangs)
+	if (!extended && code == 0x46)
+		{
+		if (!up)
+			X64RequestThreadDump();
+		return;
+		}
 	// (audio U5) the media keys a PC keyboard (and QEMU's volumeup/volumedown) sends as E0-prefixed codes of their own
 	// -- not grey duplicates of keypad keys: with the prefix dropped, Volume Up typed a 'B' (0x30) and Volume Down a
 	// 'C' (0x2E). The phone's volume keys instead.

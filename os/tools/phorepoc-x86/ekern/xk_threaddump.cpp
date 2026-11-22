@@ -76,21 +76,38 @@ static void Dump()
 
 // A supervisor thread that sleeps, then dumps. (First versions -- an ISR-callback NTimer queueing a DFC,
 // then one long NKern::Sleep -- never fired once the boot had hung: long timers stopped expiring. X4.27.)
+// It is always there: besides DUMP=<s> it dumps whenever X64RequestThreadDump is called -- the i8042 driver calls it
+// on Scroll Lock (QEMU: "sendkey scroll_lock"), so a test that times out (first_boot.py) gets a dump of the hang on any
+// build, not only after a DUMP= rebuild. Cheap: a flag polled every 20 ms.
+static volatile TInt TheDumpRequests;
+
+void X64RequestThreadDump()
+	{
+	__e32_atomic_add_ord32(&TheDumpRequests, 1);	// from the keyboard ISR: no locks, the dump thread picks it up
+	}
+
 static TInt DumpThreadFn(TAny*)
 	{
 	// 20 ms steps: a timer under 32 ticks expires straight from the tick ISR (nk_timer.cpp), so this
 	// fires even if the timer queue's DFC thread is stuck -- which is what a long sleep here showed
-	for (TInt i=0; i<XK_DUMP_AT*50; ++i)
+	const TInt at = XK_DUMP_AT > 0 ? XK_DUMP_AT * 50 : -1;
+	TInt seen = 0;
+	for (TInt i=1;; ++i)
+		{
 		NKern::Sleep(20);
-	Kern::Printf("[dump] awake at tick %d", NKern::TickCount());
-	Dump();
-	return KErrNone;
+		const TInt req = TheDumpRequests;
+		if (i == at || req != seen)
+			{
+			const TBool timed = i == at;
+			seen = req;
+			Kern::Printf("[dump] awake at tick %d (%s)", NKern::TickCount(), timed ? "DUMP=" : "Scroll Lock");
+			Dump();
+			}
+		}
 	}
 
 void X64ArmThreadDump()
 	{
-	if (XK_DUMP_AT <= 0)
-		return;
 	_LIT(KDumpName, "X64Dump");
 	SThreadCreateInfo info;
 	info.iType = EThreadSupervisor;
@@ -104,7 +121,8 @@ void X64ArmThreadDump()
 	TInt r = Kern::ThreadCreate(info);
 	if (r == KErrNone)
 		Kern::ThreadResume(*(DThread*)info.iHandle);
-	Kern::Printf("[dump] thread dump in %d s -> %d", XK_DUMP_AT, r);
+	if (XK_DUMP_AT > 0 || r != KErrNone)
+		Kern::Printf("[dump] thread dump in %d s -> %d", XK_DUMP_AT, r);
 	}
 
 // X4.64: who crashed. NKern::NotifyCrash (port/x64ekern/xe_nkern.cpp) knows only the nanothread; a
