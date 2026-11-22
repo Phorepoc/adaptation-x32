@@ -91,7 +91,9 @@ public:
 // ACPI_ENABLE, unless SCI_EN is already set), PWRBTN_EN on; the SCI (level, shared, as ACPI defines it) clears the
 // status and a DFC presses the power key for KPowerKeyHoldMs -- WSERV's key repeats make it SysAp's long press.
 static const TUint16 KPm1PwrBtn = 0x0100;				// PM1_STS / PM1_EN bit 8
-static const TInt KPowerKeyHoldMs = 3000;
+// 6 s: core SysAp's power-key options (2026-10-15) run the long action (default: the power menu) at a 2 s hold and
+// switch off at 5 s (KPhPkOffUs) -- a 3 s hold only opened the menu, so the PC never switched off.
+static const TInt KPowerKeyHoldMs = 6000;
 
 class TX64PowerButton
 	{
