@@ -9,6 +9,7 @@
 //     canonical 48-bit (bit 47 sign-extended: gen8_noncanonical_addr strips it), ranges inside 2^48 and not overlapping
 //     each other; the batch (the last object) must hold [start, start + len), len 8-byte multiple. Then each object is
 //     (re)bound at its address and the ring gets MI_BATCH_BUFFER_START + the seqno store + MI_USER_INTERRUPT
+//   * EmitCtxWa: needs xk_i915_wa.h included first
 //   * Wait: seqnos wrap; i915_seqno_passed = (s32)(hw - want) >= 0
 #ifndef XK_I915_CORE_H
 #define XK_I915_CORE_H
@@ -69,6 +70,23 @@ namespace I915
 			const TGemObject* b = iGem->Get(aObjs[aCount - 1].iHandle);
 			if (!aBatchLen || (aBatchLen & 7) || (aBatchStart & 3) || (TUint64)aBatchStart + aBatchLen > ((TUint64)b->iPages << 12))
 				return KErrArgument;
+			return KErrNone;
+			}
+
+		// the context workarounds as the context's first request (intel_engine_emit_ctx_wa, run once per new context
+		// from the render state setup): the LRI block, then a seqno like any request; KErrServerBusy if the ring is full
+		TInt EmitCtxWa(const TWaList& aWa, TUint32& aSeqno)
+			{
+			TUint32 cs[2 * TWaList::KMax + 2];
+			const TInt n = WaEmitCtx(aWa, cs);
+			if (iRing.Space() < (TUint32)n + 6)
+				return KErrServerBusy;
+			for (TInt i = 0; i < n; ++i)
+				iRing.iCpu[(iRing.iTail + i) & (iRing.iDwords - 1)] = cs[i];
+			iRing.iTail = (iRing.iTail + n) & (iRing.iDwords - 1);
+			aSeqno = ++iNextSeqno;
+			iRing.iTail = (iRing.iTail + EmitSeqno(iRing.iCpu, iRing.iTail, iRing.iDwords, iHwspGgtt, iSeqnoOffset, aSeqno))
+				& (iRing.iDwords - 1);
 			return KErrNone;
 			}
 

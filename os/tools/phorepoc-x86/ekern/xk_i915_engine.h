@@ -33,6 +33,39 @@ namespace I915
 	inline TUint32 GgttPteBytes(TUint16 aGmchCtrl) { return GgttBytesOfPtes(aGmchCtrl); }
 	inline TUint64 GgttPtesPhys(TUint64 aBar0, TUint64 aBar0Size) { return aBar0 + aBar0Size / 2; }
 
+	// the GGTT the driver owns (gen8_gmch_probe + ggtt_probe_common + the scratch clear of gen8_ggtt_clear_range):
+	// aPtes = the kernel mapping of the PTE half of BAR0; every entry points at the scratch page until something is
+	// inserted. Then a bump allocator over the GGTT for the driver's own objects (HWSP, rings, context images): the
+	// first 1 MB is left alone (the boot firmware's framebuffer lives in the stolen-memory range the BIOS mapped at 0).
+	struct TGgttSpace
+		{
+		TGgtt iGgtt;
+		TUint32 iNext, iEnd;
+		TInt Init(TUint16 aGmchCtrl, TUint64* aPtes, TUint32 aPtesMapped, TPhys aScratch, void (*aFlush)(void*), void* aCtx)
+			{
+			const TUint32 bytes = GgttPteBytes(aGmchCtrl);
+			if (!bytes)
+				return KErrNotSupported;				// GGMS 0: no GGTT (the BIOS disabled the GPU's memory)
+			TUint32 entries = bytes / 8;
+			if (entries > aPtesMapped / 8)
+				entries = aPtesMapped / 8;			// only as much as the caller mapped (2 GB of GGTT = 4 MB of PTEs)
+			iGgtt.iPtes = aPtes; iGgtt.iEntries = entries; iGgtt.iScratch = aScratch; iGgtt.iFlush = aFlush; iGgtt.iCtx = aCtx;
+			iGgtt.Clear(0, entries);
+			iNext = 1u << 20;
+			iEnd = entries >= (1u << 20) ? 0xFFFFF000u : entries << 12;
+			return KErrNone;
+			}
+		// a GGTT range for aCount pages (aAlign bytes, a power of two >= 4 KB); 0 = full
+		TUint32 Alloc(TUint32 aCount, TUint32 aAlign = 4096)
+			{
+			const TUint32 at = (iNext + aAlign - 1) & ~(aAlign - 1);
+			if (at < iNext || (TUint64)at + ((TUint64)aCount << 12) > iEnd)
+				return 0;
+			iNext = at + (aCount << 12);
+			return at;
+			}
+		};
+
 	struct TEngine
 		{
 		TRegs iRegs;

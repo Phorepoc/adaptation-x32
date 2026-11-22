@@ -263,6 +263,17 @@ namespace I915
 		TUint64** iVirt;
 		TUint64 iGpuAddr;
 		TCache iCache;
+		void* iCookie;			// the object allocator's (TObjMem): the kernel's shared chunk
+		};
+
+	// Optional: allocate a whole object at once (the kernel: one shared chunk per object, so GEM_MMAP can hand the
+	// client a handle to it and the pages outlive GEM_CLOSE while the client still maps them -- they are freed when the
+	// chunk goes). Fills aPhys[0..n) and aVirt[0..n) (the kernel mapping of each page).
+	struct TObjMem
+		{
+		TInt (*iAlloc)(void* aCtx, TUint32 aPages, TPhys* aPhys, TUint64** aVirt, void*& aCookie);
+		void (*iRelease)(void* aCtx, void* aCookie);	// the table lets go; the memory goes when the last user does
+		void* iCtx;
 		};
 
 	struct TGemTable
@@ -270,12 +281,14 @@ namespace I915
 		enum { KMaxObjects = 4096 };
 		TGemObject iObj[KMaxObjects];
 		TMem iMem;
+		TObjMem iObjMem;			// iAlloc == 0: page by page through iMem
 		void* (*iAllocArray)(TUint32 aBytes);	// kernel heap for the page lists
 		void (*iFreeArray)(void* aPtr);
 
 		void Init(const TMem& aMem, void* (*aAlloc)(TUint32), void (*aFree)(void*))
 			{
 			iMem = aMem; iAllocArray = aAlloc; iFreeArray = aFree;
+			iObjMem.iAlloc = 0; iObjMem.iRelease = 0; iObjMem.iCtx = 0;
 			for (TInt i = 0; i < KMaxObjects; ++i)
 				iObj[i].iPages = 0;
 			}
@@ -305,7 +318,16 @@ namespace I915
 				if (o.iVirt) iFreeArray(o.iVirt);
 				return KErrNoMemory;
 				}
-			for (TUint32 i = 0; i < n; ++i)
+			o.iCookie = 0;
+			if (iObjMem.iAlloc)
+				{
+				if (iObjMem.iAlloc(iObjMem.iCtx, n, o.iPhys, o.iVirt, o.iCookie) != KErrNone)
+					{
+					iFreeArray(o.iPhys); iFreeArray(o.iVirt);
+					return KErrNoMemory;
+					}
+				}
+			else for (TUint32 i = 0; i < n; ++i)
 				if (iMem.iAllocPage(iMem.iCtx, o.iPhys[i], o.iVirt[i]) != KErrNone)
 					{
 					while (i--)
@@ -339,7 +361,9 @@ namespace I915
 				return KErrBadHandle;
 			if (aVm && o->iGpuAddr)
 				aVm->Unmap(o->iGpuAddr, o->iPages);
-			for (TUint32 i = 0; i < o->iPages; ++i)
+			if (o->iCookie)
+				iObjMem.iRelease(iObjMem.iCtx, o->iCookie);
+			else for (TUint32 i = 0; i < o->iPages; ++i)
 				iMem.iFreePage(iMem.iCtx, o->iPhys[i], o->iVirt[i]);
 			iFreeArray(o->iPhys); iFreeArray(o->iVirt);
 			o->iPages = 0;
