@@ -461,6 +461,84 @@ static void FindPowerOff(TUint32 aInfo, TInt* aSp)
 		}
 	}
 
+#ifdef XK_STAGES
+// STAGES: an exception before the kernel installs its own IDT (the jump into the kernel, its first instructions) is
+// caught here -- CMOS 0x73 = vector, 0x74..0x77 = RIP, 0x78..0x7B = CR2, 0x7C..0x7D = error code, 0x7E = 0xA5 -- and the
+// machine resets (CF9), so the rig's collector can name the fault. The stubs and the table live in the bootstrap's low
+// pages, which the kernel's tables keep identity-mapped (KernPd[0..1]).
+extern "C" void XbFault(TUint64* aFrame);
+__asm__(
+	".text\n"
+	"xb_common:\n"
+	"mov rdi, rsp\n"
+	"and rsp, -16\n"
+	"call XbFault\n"
+	"1: hlt\n" "jmp 1b\n"
+	"xb_v0:\n" "push 0\n""push 0\n" "jmp xb_common\n"
+	"xb_v1:\n" "push 0\n""push 1\n" "jmp xb_common\n"
+	"xb_v2:\n" "push 0\n""push 2\n" "jmp xb_common\n"
+	"xb_v3:\n" "push 0\n""push 3\n" "jmp xb_common\n"
+	"xb_v4:\n" "push 0\n""push 4\n" "jmp xb_common\n"
+	"xb_v5:\n" "push 0\n""push 5\n" "jmp xb_common\n"
+	"xb_v6:\n" "push 0\n""push 6\n" "jmp xb_common\n"
+	"xb_v7:\n" "push 0\n""push 7\n" "jmp xb_common\n"
+	"xb_v8:\n""push 8\n" "jmp xb_common\n"
+	"xb_v9:\n" "push 0\n""push 9\n" "jmp xb_common\n"
+	"xb_v10:\n""push 10\n" "jmp xb_common\n"
+	"xb_v11:\n""push 11\n" "jmp xb_common\n"
+	"xb_v12:\n""push 12\n" "jmp xb_common\n"
+	"xb_v13:\n""push 13\n" "jmp xb_common\n"
+	"xb_v14:\n""push 14\n" "jmp xb_common\n"
+	"xb_v15:\n" "push 0\n""push 15\n" "jmp xb_common\n"
+	"xb_v16:\n" "push 0\n""push 16\n" "jmp xb_common\n"
+	"xb_v17:\n""push 17\n" "jmp xb_common\n"
+	"xb_v18:\n" "push 0\n""push 18\n" "jmp xb_common\n"
+	"xb_v19:\n" "push 0\n""push 19\n" "jmp xb_common\n"
+	"xb_v20:\n" "push 0\n""push 20\n" "jmp xb_common\n"
+	"xb_v21:\n""push 21\n" "jmp xb_common\n"
+	"xb_v22:\n" "push 0\n""push 22\n" "jmp xb_common\n"
+	"xb_v23:\n" "push 0\n""push 23\n" "jmp xb_common\n"
+	"xb_v24:\n" "push 0\n""push 24\n" "jmp xb_common\n"
+	"xb_v25:\n" "push 0\n""push 25\n" "jmp xb_common\n"
+	"xb_v26:\n" "push 0\n""push 26\n" "jmp xb_common\n"
+	"xb_v27:\n" "push 0\n""push 27\n" "jmp xb_common\n"
+	"xb_v28:\n" "push 0\n""push 28\n" "jmp xb_common\n"
+	"xb_v29:\n""push 29\n" "jmp xb_common\n"
+	"xb_v30:\n""push 30\n" "jmp xb_common\n"
+	"xb_v31:\n" "push 0\n""push 31\n" "jmp xb_common\n"
+	);
+extern "C" void xb_v0(), xb_v1(), xb_v2(), xb_v3(), xb_v4(), xb_v5(), xb_v6(), xb_v7(), xb_v8(), xb_v9(), xb_v10(), xb_v11(), xb_v12(), xb_v13(), xb_v14(), xb_v15(), xb_v16(), xb_v17(), xb_v18(), xb_v19(), xb_v20(), xb_v21(), xb_v22(), xb_v23(), xb_v24(), xb_v25(), xb_v26(), xb_v27(), xb_v28(), xb_v29(), xb_v30(), xb_v31();
+static void (* const KXbVec[32])() = { xb_v0, xb_v1, xb_v2, xb_v3, xb_v4, xb_v5, xb_v6, xb_v7, xb_v8, xb_v9, xb_v10, xb_v11, xb_v12, xb_v13, xb_v14, xb_v15, xb_v16, xb_v17, xb_v18, xb_v19, xb_v20, xb_v21, xb_v22, xb_v23, xb_v24, xb_v25, xb_v26, xb_v27, xb_v28, xb_v29, xb_v30, xb_v31 };
+static TUint64 XbIdt[64] __attribute__((aligned(16)));
+static inline void CmosW(TUint8 aIdx, TUint8 aVal) { outb(0x70, aIdx); outb(0x71, aVal); }
+extern "C" void XbFault(TUint64* aFrame)
+	{
+	const TUint64 vec = aFrame[0], err = aFrame[1], rip = aFrame[2];
+	TUint64 cr2;
+	__asm__ __volatile__("mov %0, cr2" : "=r"(cr2));
+	CmosW(0x73, (TUint8)vec);
+	for (TInt i = 0; i < 4; ++i) { CmosW(0x74 + i, (TUint8)(rip >> (8 * i))); CmosW(0x78 + i, (TUint8)(cr2 >> (8 * i))); }
+	CmosW(0x7C, (TUint8)err); CmosW(0x7D, (TUint8)(err >> 8));
+	CmosW(0x7E, 0xA5);
+	outb(0xCF9, 0x02); outb(0xCF9, 0x06);
+	for (;;) __asm__ __volatile__("cli; hlt");
+	}
+static void XbIdtInstall()
+	{
+	TUint16 cs;
+	__asm__ __volatile__("mov %0, cs" : "=r"(cs));
+	for (TInt v = 0; v < 32; ++v)
+		{
+		const TUint64 a = (TUint64)(TUint32)(TLinAddr)KXbVec[v];
+		XbIdt[2 * v] = (a & 0xFFFF) | ((TUint64)cs << 16) | ((TUint64)0x8E << 40) | ((a >> 16 & 0xFFFF) << 48);
+		XbIdt[2 * v + 1] = a >> 32;
+		}
+	struct { TUint16 iLimit; TUint64 iBase; } __attribute__((packed)) d = { sizeof(XbIdt) - 1, (TUint64)(TUint32)(TLinAddr)XbIdt };
+	__asm__ __volatile__("lidt %0" : : "m"(d));
+	CmosW(0x7E, 0);
+	}
+
+#endif
 extern "C" void kmain(TUint32 aMultibootInfo)
 	{
 	outb(0x3F9,0); outb(0x3FB,0x80); outb(0x3F8,1); outb(0x3F9,0); outb(0x3FB,3); outb(0x3FA,0xC7);
@@ -798,15 +876,20 @@ extern "C" void kmain(TUint32 aMultibootInfo)
 	Trace("kernel entry", k.iEntryPoint); Trace("super page phys", superPhys);
 	Put("[xboot] switching to the kernel address space, calling _E32Startup(ROM header, super page)\n");
 	Stage(EStBootJump);									// into the kernel
+#ifdef XK_STAGES
+	XbIdtInstall();
+#endif
 
 	// CR4.PGE on (global pages) before the kernel asks for them; then CR3, stack, call.
 	__asm__ __volatile__(
 		"mov rax, cr4\n" "or rax, 0x80\n" "mov cr4, rax\n"
 		"mov cr3, rcx\n"
+		"mov al, 0x70\n" "out 0x70, al\n" "mov al, 0x07\n" "out 0x71, al\n"	// stage 0x07: on the kernel's tables
+		"mov al, 0x71\n" "out 0x70, al\n" "mov al, 0xF8\n" "out 0x71, al\n"
 		"mov esp, edx\n"
 		"xor ebp, ebp\n"
 		"call rbx\n"
 		: : "c"((TUint64)rootPhys), "d"((TUint64)initSp), "b"((TUint64)k.iEntryPoint),
-			"D"((TUint64)romLin), "S"((TUint64)KSuperPageLinAddr) : "memory");
+			"D"((TUint64)romLin), "S"((TUint64)KSuperPageLinAddr) : "rax", "memory");
 	Die("kernel entry returned");
 	}

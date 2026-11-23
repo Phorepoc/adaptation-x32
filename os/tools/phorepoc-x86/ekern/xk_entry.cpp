@@ -569,8 +569,8 @@ extern "C" __attribute__((section(".text.entry"))) void _E32Startup(TLinAddr aRo
 	{
 	TLinAddr sp;
 	__asm__ __volatile__("mov %0, esp" : "=r"(sp));
-	Put("\n[ekern] _E32Startup: in the high half, on the initial thread stack\n");
 	XSTAGE(EStKernEntry);
+	Put("\n[ekern] _E32Startup: in the high half, on the initial thread stack\n");
 	Line("ROM header", aRomHeader);  Line("super page", aSuperPage);  Line("rsp", sp);
 
 	// The firmware leaves the legacy 8259 PICs delivering IRQ0-7 on vectors 8-15 -- on top of the CPU
