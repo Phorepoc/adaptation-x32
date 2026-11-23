@@ -1,7 +1,7 @@
 # adaptation-x32
 
 This is the port of the Phorepoc OS kernel, Symbian's EKA2, to 64-bit x86 processors. The 2010 release only ran on ARM phones and on an old
-32-bit x86 emulator. We took that emulator's kernel code and made a sibling of it for modern CPUs.
+32-bit x86 emulator. Phorepoc took that emulator's kernel code and made a sibling of it for modern CPUs.
 
 It uses the x32 ABI: the processor runs in 64-bit mode, but pointers stay 32 bits wide. Symbian was written around
 32-bit pointers, so this lets its code run unchanged at full 64-bit speed.
@@ -27,7 +27,7 @@ a board that uses it, and build that board (`phe ... -b <board>`). The kernel im
 
 ## License
 
-Code we wrote, and Symbian files we've changed, are EPL-2.0, with GPL-2.0-or-later as a Secondary License, and
-Symbian files we use unchanged stay EPL-1.0. The license texts are in `LICENSES/`.
+Phorepoc-authored files and modified Symbian files are EPL-2.0, with GPL-2.0-or-later as a Secondary License, and
+unmodified Symbian files remain EPL-1.0. The license texts are in `LICENSES/`.
 
 Contributions are welcome under the same terms. Add your name to `AUTHORS` in your first pull request.
