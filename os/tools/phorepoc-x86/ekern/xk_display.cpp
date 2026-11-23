@@ -288,6 +288,8 @@ static void Bandwidth(const char* aWhat, volatile TUint32* aBuf, TInt aBytes, TI
 // case there is). Per row, the first..last differing 32-bit word span is copied. The cost is two RAM
 // scans of the screen per flush.
 static const TInt KFlushMs = 20;
+static const TInt KRowBufWords = 4096;		// one shadow row (the widest screen: 2048 pixels, rotated 4096)
+static TUint32 TheRowBuf[KRowBufWords];
 static DPlatChunkHw* TheScreenChunk;		// user-RW, cached: what the HAL hands out in shadow mode
 static TUint32* TheScreen;
 static TPhysAddr TheScreenPhys;				// the shadow's pages (EDisplayHalGetDisplayMemoryHandle commits a chunk over them)
@@ -528,6 +530,16 @@ static void FlushDfcFn(TAny*)
 			continue;
 		while (src[last] == m[last])
 			--last;
+		// The row is read from the shadow ONCE, into TheRowBuf, and everything below (the s framebuffer lines, the mirror) uses that copy.
+		// WSERV draws into the shadow at the same time as this DFC runs: reading src[x] again for each of the s lines, and again for the
+		// mirror, let a source row that changed between the reads put the old pixels on the first line, the new on the second, and the NEW
+		// value in the mirror, so the next pass saw "no change" and the mismatch stayed: the stray one-pixel lines of a scaled screen.
+		const TInt span = last - first + 1;
+		if (span > KRowBufWords)
+			last = first + KRowBufWords - 1;
+		for (TInt x=first; x<=last; ++x)
+			TheRowBuf[x - first] = src[x];
+		src = TheRowBuf - first;
 		if (X64Rot)
 			{
 			// shadow (x, y) -> display (dx, dy): rotation 1 = (y, W-1-x), rotation 3 = (H-1-y, x)
