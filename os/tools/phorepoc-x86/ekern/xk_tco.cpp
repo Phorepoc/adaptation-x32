@@ -93,8 +93,8 @@ static TInt Ich9ClearNoReboot()
 
 // NO_REBOOT on Sunrise Point: the SMBus's SMBCTRL private config register, through the P2SB sideband window (P2SB =
 // 00:1f.1, hidden by firmware: config 0xE1 bit 0 hides it; SBREG_BAR = its BAR0; a register = SBREG + port << 16 + offset).
-// The bit's place is from the datasheet's SMBus PCR table (SMBCTRL bit 0: "NR", no reboot) -- to be confirmed on the
-// device, so both values are logged.
+// NO_REBOOT is bit 1 (0x2): Linux drivers/watchdog/iTCO_wdt.c no_reboot_bit() for TCO version 4 (Sunrise Point, as
+// i2c-i801 registers it: SBREG + SBREG_SMBCTRL 0xc6000c). Both values are logged.
 static TInt SptClearNoReboot()
 	{
 	const TUint32 e0 = XkPciRead(0, 31, 1, 0xE0);
@@ -112,10 +112,10 @@ static TInt SptClearNoReboot()
 		return -1;
 	volatile TUint32* smbctrl = (volatile TUint32*)(ch->LinearAddress() + 0x0C);
 	const TUint32 v = *smbctrl;
-	if (v & 1)
-		*smbctrl = v & ~1u;
+	if (v & 2)
+		*smbctrl = v & ~2u;
 	Kern::Printf("[tco] SPT SMBCTRL %08x -> %08x (SBREG %08x)", v, *smbctrl, bar);
-	const TInt was = v & 1;
+	const TInt was = (v >> 1) & 1;
 	ch->Close(NULL);
 	return was;
 	}

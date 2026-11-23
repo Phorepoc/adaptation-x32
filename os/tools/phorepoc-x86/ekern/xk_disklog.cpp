@@ -12,6 +12,7 @@
 //   "PHDLOG1\0" | boot id u32 | bytes u32 | data sectors u32 | flushes u32 | crashed u32      (little endian)
 #include <kernel/kernel.h>
 #include "xk_logring.h"
+#include "xk_stage.h"
 
 TInt X64DiskRaw(TBool aWrite, TUint32 aLba, TInt aCount, TUint8* aBuf, TBool aLocked);	// xk_ata.cpp
 
@@ -120,6 +121,7 @@ static void TickDfc(TAny*)
 			}
 		Kern::Printf("[disklog] phorepoc-log at LBA %u, %u MB: the log goes there every second (boot id %08x)", TheFirst,
 			TheSectors >> 11, X64LogBootId());
+		XSTAGE(EStDiskLog);
 		}
 	Flush(EFalse, ETrue);
 	TheTimer->Again(NKern::TimerTicks(1000));

@@ -14,6 +14,7 @@
 // IDENTIFY DEVICE, READ/WRITE DMA EXT (LBA48), FLUSH CACHE EXT. X64_TODO: the port interrupt + a semaphore, NCQ.
 #include <kernel/kern_priv.h>
 #include "xk_pci.h"
+#include "xk_stage.h"
 
 static const TInt KAhciBuf = 128 * 512;						// = xk_ata.cpp's KBufSectors * KSectorSize
 static const TInt KOffClb = 0x0000, KOffFis = 0x0400, KOffTbl = 0x0800, KOffBuf = 0x1000;
@@ -169,6 +170,7 @@ TUint32 XkAhciProbe()
 		n = (TUint64)id[100] | ((TUint64)id[101] << 16) | ((TUint64)id[102] << 32) | ((TUint64)id[103] << 48);
 	sectors = n > 0xFFFFFFFFu ? 0xFFFFFFFFu : (TUint32)n;
 	Kern::Printf("[ahci] SATA disk: %u sectors (%u MB)", sectors, sectors >> 11);
+	XSTAGE(EStAhciDisk);
 	return sectors;
 	}
 

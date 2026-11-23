@@ -17,6 +17,7 @@ extern "C" void KernelMain();
 extern "C" void X64_StartSystemTick();					// xk_irq.cpp
 extern "C" void X64_StartBootCpuTick();					// xk_irq.cpp: the boot CPU's local-APIC timer
 extern "C" TUint32 X64_NanoWaitCalibration();				// xk_irq.cpp: ps per K::DoNanoWait pass
+#include "xk_stage.h"
 #include "xk_interrupt.h"										// X64InterruptInit1/2AP (X4.21)
 extern "C" void X64_StartApTick();						// xk_irq.cpp: an AP's own local-APIC timer
 extern volatile TUint32 X64_TickCount;
@@ -457,6 +458,7 @@ void X64StartI915();				// xk_i915.cpp: the Intel Gen9 render engine (I915=1; gp
 #endif
 void X64StartTco();					// xk_tco.cpp: the chipset watchdog (TCO=1)
 void X64StartNetLog();
+extern "C" void X64StartBootGuard();	// xk_stage.cpp
 void X64StartDiskLog();				// xk_disklog.cpp: the log partition (DISKLOG=1)				// usbhost/xk_netlog.cpp: the debug link (NETLOG=1)
 void X64StartSound();				// xk_sound.cpp: AC'97 or HD Audio (X4.88)
 void X64StartVmwSvga();				// xk_vmwsvga.cpp: read-only VMware SVGA II / SVGA3D capability probe (vm-gpu-options.md S0)
@@ -468,12 +470,17 @@ extern "C" TInt X64ExtensionEntry(TInt aReason)
 	{
 	if (aReason != KModuleEntryReasonExtensionInit1)
 		return KErrNone;
+	XSTAGE(EStKernExt);
+	XSTAGE(EStPower);
 	X64StartPower();					// X4.74: before the drivers -- SSM off/restart need it
+	XSTAGE(EStMedia);
 	X64StartMediaExtensions();
-	X64StartDisplay();
-	X64StartKeyboard();
-	X64StartI2cTouch();
-	X64StartNetwork();					// X4.47: the e1000 NIC + the Ethernet LDD
+	// the rig's guards and logs come right after the disk, before every other driver: a driver that hangs the boot
+	// on new hardware is then on the disk log (and the watchdog runs)
+	XSTAGE(EStRigLog);
+#ifdef XK_STAGES
+	X64StartBootGuard();				// BOOTGUARD=<s>: no UI frame in time = a fault (the rig)
+#endif
 #ifdef XK_TCO
 	X64StartTco();						// the chipset watchdog: a hung kernel resets (the GPD Win 2 rig)
 #endif
@@ -483,16 +490,28 @@ extern "C" TInt X64ExtensionEntry(TInt aReason)
 #ifdef XK_NETLOG
 	X64StartNetLog();					// the debug link's sink, before the USB host finds the adapter
 #endif
+	XSTAGE(EStDisplay);
+	X64StartDisplay();
+	XSTAGE(EStKeyboard);
+	X64StartKeyboard();
+	XSTAGE(EStTouch);
+	X64StartI2cTouch();
+	XSTAGE(EStNetwork);
+	X64StartNetwork();					// X4.47: the e1000 NIC + the Ethernet LDD
 #ifdef XK_USB_HOST
+	XSTAGE(EStUsbHost);
 	X64StartUsbHost();
 #endif
 #ifdef XK_I915
 	X64StartI915();
 #endif
+	XSTAGE(EStSound);
 	X64StartSound();					// X4.88: AC'97 audio (its LDD/PDD load by file name, like the NIC's)
+	XSTAGE(EStGraphics);
 	X64StartGraphicsResource();			// the sg extension, before any user code (a real ROM starts sgextension.dll here)
 	X64StartVmwSvga();						// S0: logs [svga] lines (a no-op line when the device is absent)
 	X64ArmThreadDump();
+	XSTAGE(EStExtDone);
 	SThreadCreateInfo info;
 	info.iType = EThreadSupervisor;
 	info.iFunction = ProbeThread;
@@ -551,6 +570,7 @@ extern "C" __attribute__((section(".text.entry"))) void _E32Startup(TLinAddr aRo
 	TLinAddr sp;
 	__asm__ __volatile__("mov %0, esp" : "=r"(sp));
 	Put("\n[ekern] _E32Startup: in the high half, on the initial thread stack\n");
+	XSTAGE(EStKernEntry);
 	Line("ROM header", aRomHeader);  Line("super page", aSuperPage);  Line("rsp", sp);
 
 	// The firmware leaves the legacy 8259 PICs delivering IRQ0-7 on vectors 8-15 -- on top of the CPU

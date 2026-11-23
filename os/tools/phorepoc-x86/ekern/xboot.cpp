@@ -25,6 +25,7 @@
 #include <kernel/kernboot.h>
 #include <mmboot.h>
 #include "xk_board.h"
+#include "xk_stage.h"
 
 typedef TUint64 TEntry;				// a long-mode page-table entry, any level
 
@@ -87,6 +88,12 @@ static void Band(TUint aN, TUint32 aRgb)
 		for (TUint32 x = 0; x < BandW; ++x)
 			*(volatile TUint32*)(BandFb + y * BandPitch + x * 4) = aRgb;
 	}
+static void Stage(TUint8 aCode)
+	{
+	StageCmos(aCode);
+	if (XK_BANDS)
+		StagePaint(BandFb, BandPitch, BandW, BandH, aCode);
+	}
 static void BandInit(TUint32 aInfo)
 	{
 	TUint32 total = *(TUint32*)aInfo;
@@ -133,7 +140,7 @@ static void EarlyTco()
 		const TUint32 bar = PciRd(31, 1, 0x10) & ~0xFu;
 		PciWr(31, 1, 0xE0, e0);
 		if (bar)
-			{ volatile TUint32* c = (volatile TUint32*)(TLinAddr)(bar + (0xC6u << 16) + 0x0C); *c &= ~1u; }
+			{ volatile TUint32* c = (volatile TUint32*)(TLinAddr)(bar + (0xC6u << 16) + 0x0C); *c &= ~2u; }		// NO_REBOOT = bit 1 (Linux iTCO_wdt.c no_reboot_bit, TCO v4)
 		}
 	if (!tco)
 		{ Put("  [xboot] TCO: none\n"); return; }
@@ -148,7 +155,7 @@ static void EarlyTco()
 	}
 
 static void Die(const char* aWhy)
-	{ Put("  [xboot] FATAL: "); Put(aWhy); Put("\n"); Band(15, 0xFF00FF); for(;;) { __asm__ __volatile__("cli; hlt"); } }
+	{ Put("  [xboot] FATAL: "); Put(aWhy); Put("\n"); Stage(EStBootDie); for(;;) { __asm__ __volatile__("cli; hlt"); } }
 
 static void Zero(TUint32 aPhys, TUint32 aSize)
 	{ volatile TUint8* p=(volatile TUint8*)aPhys; while (aSize--) *p++=0; }
@@ -460,13 +467,14 @@ extern "C" void kmain(TUint32 aMultibootInfo)
 	Put("\n[xboot] Phorepoc amd64/x32 bootstrap -- EKA2 flexible memory model, long-mode tables\n");
 	EarlyTco();											// TCO=1: a reset in ~60 s unless the kernel takes over
 	BandInit(aMultibootInfo);
-	Band(0, 0xFF0000);									// 0 red: the bootstrap runs
+	Stage(EStBootEntry);								// the bootstrap runs
 
 	const TUint32 romLin	= SYMVAL(__rom_lin);
 	const TUint32 romPhys	= SYMVAL(__rom_phys);
 	const TUint32 romSize	= (SYMVAL(__rom_size)+KPageMask)&~KPageMask;
 	const TUint32 svData	= SYMVAL(__svdata_size);
 	Trace("ROM phys", romPhys); Trace("ROM size", romSize); Trace("SvData size", svData);
+	Stage(EStBootRom);
 
 	// ---- RAM: one bank, from just above the ROM image + the per-CPU root tables to the top.
 	// (bootmain.asm "ROM is actually in RAM": the ROM area is excised from the RAM list.)
@@ -482,7 +490,7 @@ extern "C" void kmain(TUint32 aMultibootInfo)
 	BankEnd = ramTop;
 	AllocNext = BankBase;
 	Trace("RAM bank base", BankBase); Trace("RAM bank end", BankEnd);
-	Band(1, 0xFFFF00);									// 1 yellow: a RAM bank
+	Stage(EStBootMem);									// a RAM bank
 
 	// ---- InitMemMapSystem: page directory, PT0 self-mapping the page-table window, PD mapped.
 	KernPd = (TEntry*)AllocPages(KPageDirectorySize>>KPageShift);
@@ -751,6 +759,7 @@ extern "C" void kmain(TUint32 aMultibootInfo)
 	sp.iReserved[1] = (TInt)KX64RootLin;						//           ... and linear
 	FramebufferFromMultiboot(aMultibootInfo, sp.iReserved);	// [16..20], xk_board.h (X4.18)
 	Trace("framebuffer phys", (TUint32)sp.iReserved[KX64SuperFbPhys]);
+	Stage(EStBootSuper);
 	{
 	TUint8 ids[KX64MaxCpus];
 	TUint8* isa = (TUint8*)&sp.iReserved[KX64SuperIsaMap];	// 16 bytes = [21..24], 0 = identity
@@ -784,10 +793,11 @@ extern "C" void kmain(TUint32 aMultibootInfo)
 	KernPd[0] = 0x000000u | KPermKernel | KPdeLargePage;
 	KernPd[1] = 0x200000u | KPermKernel | KPdeLargePage;
 
+	Stage(EStBootTables);
 	Trace("page tables used", PtCount); Trace("RAM used by boot", AllocNext-BankBase);
 	Trace("kernel entry", k.iEntryPoint); Trace("super page phys", superPhys);
 	Put("[xboot] switching to the kernel address space, calling _E32Startup(ROM header, super page)\n");
-	Band(2, 0x00FF00);									// 2 green: into the kernel
+	Stage(EStBootJump);									// into the kernel
 
 	// CR4.PGE on (global pages) before the kernel asks for them; then CR3, stack, call.
 	__asm__ __volatile__(

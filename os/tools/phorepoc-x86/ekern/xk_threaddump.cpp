@@ -11,6 +11,7 @@
 //     py tools/phorepoc-x86/romsym_x32.py --dump .phorepoc-x86-build/ekern/run.log
 // Bounded: one dump, 12 stack words per thread. Compiled -fno-access-control (the wait state is private).
 #include <kernel/kern_priv.h>
+#include "xk_stage.h"
 
 #ifndef XK_DUMP_AT
 #define XK_DUMP_AT 0
@@ -149,6 +150,7 @@ extern "C" void X64_CrashWho(NThreadBase* aN)
 static inline void CrashOutb(TUint16 aPort, TUint8 aVal) { __asm__ __volatile__("out dx, al" : : "d"(aPort), "a"(aVal)); }
 extern "C" void X64_CrashEnd()
 	{
+	XSTAGE(EStCrash);
 #ifdef XK_DISKLOG
 	X64DiskLogCrashFlush();
 #endif

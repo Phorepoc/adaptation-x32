@@ -75,6 +75,9 @@ USBDEF=""; USBH=$SRC/usbhost; [ "${USB_HOST:-0}" = 1 ] && USBDEF="-DXK_USB_HOST=
 # DISKLOG=1: the log ring to the SSD's phorepoc-log partition every second (xk_disklog.cpp; the rig's power-off-proof log)
 [ "${DISKLOG:-0}" = 1 ] && USBDEF="$USBDEF -DXK_DISKLOG=1"
 { [ "${DISKLOG:-0}" = 1 ] || { [ "${NETLOG:-0}" = 1 ] && [ "${USB_HOST:-0}" = 1 ]; }; } && USBDEF="$USBDEF -DXK_LOGRING=1"
+# the rig's boot breadcrumbs (xk_stage.h: CMOS 0x70/0x71, and the stripes + digits with BANDS=1)
+{ [ "${BANDS:-0}" = 1 ] || [ "${DISKLOG:-0}" = 1 ]; } && USBDEF="$USBDEF -DXK_STAGES=1"
+[ -n "${BOOTGUARD:-}" ] && USBDEF="$USBDEF -DXK_BOOT_GUARD=$BOOTGUARD"
 # FAULTRESET=1: every kernel crash ends in a reset after the report (xk_threaddump.cpp X64_CrashEnd; the rig)
 [ "${FAULTRESET:-0}" = 1 ] && USBDEF="$USBDEF -DXK_FAULT_RESET=1"
 # BANDS=1: boot progress stripes on the GOP framebuffer (xboot.cpp; no serial port on the GPD)
@@ -107,7 +110,7 @@ PRE="-include toolchain/x32/port_prelude.h -include e32def.h"
 # a run that changes none of them (every app-debug iteration: only the ROM changes) reuses them. The ROM image
 # object (xk_uimage.o) is rebuilt when romsect.bin is newer; link + ISO are skipped when nothing changed at all.
 OSTAMP=$OUT/image-objs.stamp
-OKEY="$DEFS|usb${USB_HOST:-0}|i915${I915:-0}|nl${NETLOG:-0}.${NETLOG_TOKEN:-0}|dl${DISKLOG:-0}|bands${BANDS:-0}|fr${FAULTRESET:-0}.${CRASH_TEST:-}|tco${TCO:-0}.${TCO_SECS:-30}.${TCO_TEST:-0}|$FBDEF|$KKEY|snd${SOUND_TEST:-}|hda${HDADUMP:-}${HDAIMM:-}|ramc${RAMC_DISK:-1}.${RAMC_MB:-128}"
+OKEY="$DEFS|usb${USB_HOST:-0}|i915${I915:-0}|nl${NETLOG:-0}.${NETLOG_TOKEN:-0}|dl${DISKLOG:-0}|bands${BANDS:-0}|bg${BOOTGUARD:-}|fr${FAULTRESET:-0}.${CRASH_TEST:-}|tco${TCO:-0}.${TCO_SECS:-30}.${TCO_TEST:-0}|$FBDEF|$KKEY|snd${SOUND_TEST:-}|hda${HDADUMP:-}${HDAIMM:-}|ramc${RAMC_DISK:-1}.${RAMC_MB:-128}"
 OBJS_OK=0
 if [ "${KCLEAN:-0}" != 1 ] && [ -f "$OSTAMP" ] && [ "$(cat "$OSTAMP")" = "$OKEY" ]    && [ -z "$(find -L "$PORT" "$EK" "$USBH" "$SRC/boot.S" "$SRC/grub.cfg" "$KINC" -newer "$OSTAMP" -type f 2>/dev/null | head -1)" ]; then
   echo "[3/5] boot stub + port objects: unchanged -- reused"; OBJS_OK=1
@@ -254,6 +257,7 @@ $CXX $DEFS $INCS $PRE -c "$EK/xk_sgresource.cpp" -o "$OUT/xk_sgresource.o"
 $CXX $DEFS $INCS $PRE -fno-access-control -c "$EK/xk_threaddump.cpp" -o "$OUT/xk_threaddump.o"
 I915OBJS=""; if [ "${I915:-0}" = 1 ]; then $CXX $DEFS $INCS $PRE -c "$EK/xk_i915.cpp" -o "$OUT/xk_i915.o"; I915OBJS="$OUT/xk_i915.o"; fi
 case "$USBDEF" in *XK_LOGRING*) $CXX $DEFS $INCS $PRE -c "$EK/xk_logring.cpp" -o "$OUT/xk_logring.o"; I915OBJS="$I915OBJS $OUT/xk_logring.o" ;; esac
+case "$USBDEF" in *XK_STAGES*) $CXX $DEFS $INCS $PRE -c "$EK/xk_stage.cpp" -o "$OUT/xk_stage.o"; I915OBJS="$I915OBJS $OUT/xk_stage.o" ;; esac
 if [ "${DISKLOG:-0}" = 1 ]; then $CXX $DEFS $INCS $PRE -c "$EK/xk_disklog.cpp" -o "$OUT/xk_disklog.o"; I915OBJS="$I915OBJS $OUT/xk_disklog.o"; fi
 if [ "${TCO:-0}" = 1 ]; then $CXX $DEFS $INCS $PRE -c "$EK/xk_tco.cpp" -o "$OUT/xk_tco.o"; I915OBJS="$I915OBJS $OUT/xk_tco.o"; fi
 # the first user program: no kernel headers, no kernel symbols

@@ -21,6 +21,12 @@
 #include <kernel/kern_priv.h>
 #include <videodriver.h>
 #include "xk_board.h"
+#include "xk_stage.h"
+#ifdef XK_STAGES
+extern "C" void X64StageSetFb(TLinAddr aFb, TUint32 aPitch, TUint32 aW, TUint32 aH);
+extern "C" void X64StageRepaint();
+extern "C" void X64StageUiFrame();
+#endif
 
 static const TPhysAddr KVgaWindowPhys = 0xA0000;
 static const TInt KVgaWindowSize = 0x20000;
@@ -481,6 +487,10 @@ static void FrameRecord()
 			}
 	if (!n)
 		return;
+#ifdef XK_STAGES
+	if (black * 10 < n * 9)										// a frame that is not (nearly) all black: the UI draws
+		X64StageUiFrame();
+#endif
 	++TheFrames;
 	const TUint wp = white * 100 / n;
 	const TUint32 ms = (TUint32)(((TUint64)NKern::TickCount() * NKern::TickPeriod()) / 1000);
@@ -579,6 +589,9 @@ static void FlushDfcFn(TAny*)
 		CursorRect(fb, wpl, nx, ny, ETrue);
 	TheDrawnX = nx;  TheDrawnY = ny;
 	SendDirty();													// SVGA: tell the host what this pass wrote (the cursor included)
+#ifdef XK_STAGES
+	X64StageRepaint();											// the boot breadcrumb stays until the UI draws
+#endif
 	if (TheFlushedRows != rowsBefore)
 		FrameRecord();
 	++TheFlushes;
@@ -961,6 +974,11 @@ void X64StartDisplay()
 		Kern::Printf("[display] framebuffer %dx%dx%d pitch %d @ %08x -> lin %08x (%d)",
 					 TheFb.iWidth, TheFb.iHeight, TheFb.iBpp, TheFb.iPitch, TheFb.iPhys,
 					 TheFbChunk ? TheFbChunk->LinearAddress() : 0, r);
+#ifdef XK_STAGES
+		if (TheFbChunk)
+			X64StageSetFb(TheFbChunk->LinearAddress(), TheFb.iPitch, TheFb.iWidth, TheFb.iHeight);
+#endif
+		XSTAGE(EStDispMapped);
 		}
 	else
 		Kern::Printf("[display] no usable GRUB framebuffer (phys %08x bpp %d) -- VGA text",
@@ -976,6 +994,7 @@ void X64StartDisplay()
 		Kern::Free(buf);
 		Bandwidth("framebuffer", (volatile TUint32*)TheFbChunk->LinearAddress(), 256*1024, 4, fb);
 		memclr((TAny*)TheFbChunk->LinearAddress(), 256*1024);
+		XSTAGE(EStDispMeasured);
 		// make_ekern.sh FBSHADOW=0|1 overrides the measurement (A/B testing); default -1 = decide.
 		// A scaled screen always has the shadow: the flusher is what scales (X4.35). So does every screen that can turn
 		// (EDisplayHalPhoreRotate): the flusher is what turns the picture back, and WSERV's screen address must stay the same
@@ -987,6 +1006,7 @@ void X64StartDisplay()
 			Kern::Printf("[display] shadow screen at %08x (%s), flushed x%d every %d ms -> %d",
 							TheScreenChunk ? TheScreenChunk->LinearAddress() : 0,
 							X64Scale > 1 ? "scaled" : TheSvga ? "SVGA: the flusher reports the dirty rectangles" : "the flusher turns it", X64Scale, KFlushMs, r);
+			XSTAGE(EStDispShadow);
 			if (r != KErrNone)
 				{
 				TheScreenChunk = NULL;
@@ -1000,6 +1020,7 @@ void X64StartDisplay()
 	NKern::ThreadLeaveCS();
 	TheMode = TheFbChunk ? 1 : 0;
 	r = Kern::AddHalEntry(EHalGroupDisplay, DisplayHal, NULL);
+	XSTAGE(EStDispHal);
 	Kern::Printf("[display] mode %d, screen %dx%d x%d at (%d,%d) of %dx%d, AddHalEntry(EHalGroupDisplay) -> %d",
 					TheMode, X64ScreenW, X64ScreenH, X64Scale, X64ScreenOx, X64ScreenOy, X64FbW, X64FbH, r);
 	}
